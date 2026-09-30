@@ -114,10 +114,13 @@ test('reads class days in every common style', () => {
   assert.deepEqual(parseDays('Mondays & Wednesdays'), [1, 3]);
 });
 
+const meet = (m) => m && { days: m.days, start: m.start, end: m.end };
+
 test('finds class times and ignores office hours', () => {
-  assert.deepEqual(findMeeting(lines(LABEL_FIRST)), { days: [2, 4], start: '11:00', end: '12:30' });
-  assert.deepEqual(findMeeting(lines(PERCENT_FIRST)), { days: [1, 3], start: '12:30', end: '14:00' });
-  assert.deepEqual(findMeeting(['05025 MW 11:00am -12:15pm RRH 5.382']), { days: [1, 3], start: '11:00', end: '12:15' });
+  assert.deepEqual(meet(findMeeting(lines(LABEL_FIRST))), { days: [2, 4], start: '11:00', end: '12:30' });
+  assert.deepEqual(meet(findMeeting(lines(PERCENT_FIRST))), { days: [1, 3], start: '12:30', end: '14:00' });
+  assert.deepEqual(meet(findMeeting(['05025 MW 11:00am -12:15pm RRH 5.382'])), { days: [1, 3], start: '11:00', end: '12:15' });
+  assert.match(findMeeting(lines(LABEL_FIRST)).source, /Meeting Times/);
   assert.equal(findMeeting(['Office hours: Thursdays, 12:30-1:30pm']), null);
 });
 
@@ -169,8 +172,11 @@ test('finds dated exams, but not review days', () => {
 });
 
 test('finds "drop the lowest"', () => {
-  assert.deepEqual(findDrops("We'll drop your lowest quiz."), [{ kind: 'quiz', what: 'quiz', n: 1 }]);
+  const [quiz] = findDrops("We'll drop your lowest quiz.");
+  assert.deepEqual([quiz.kind, quiz.n], ['quiz', 1]);
+  assert.match(quiz.source, /drop your lowest quiz/);
   assert.equal(findDrops('We drop the two lowest labs')[0].n, 2);
+  assert.equal(findDrops('We will drop your lowest exam score.')[0].kind, 'exam');
 });
 
 test('a whole syllabus becomes a class with no warnings', () => {

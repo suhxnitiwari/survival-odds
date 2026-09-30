@@ -1,6 +1,6 @@
 import { WEEKDAYS, addDays, formatTime, parseTime, prettyDate, shortDate, todayLocal, toTimeInput } from './dates.js';
 import {
-  DEFAULT_SCALE, finalTable, formatScore, isGraded, itemWeights, pickFinal, summarize, verdict,
+  DEFAULT_SCALE, describeRules, examAverage, finalTable, formatScore, isGraded, itemWeights, pickFinal, summarize, verdict,
 } from './grades.js';
 import { DEFAULT_PREFS, RULES, planStudy, upcomingExams } from './planner.js';
 import { buildCalendar } from './ics.js';
@@ -95,7 +95,28 @@ function emptyState() {
     </section>`;
 }
 
+// ---------- sources ----------
+
+/** "from your syllabus": the exact line a number came from, one tap away. */
+function sourceTag(quote, check = false) {
+  if (!quote) return check ? '<span class="check">check this</span>' : '';
+  return `<details class="src"><summary>${check ? '<span class="check">check this</span> ' : ''}from your syllabus</summary><q>${esc(quote)}</q></details>`;
+}
+
+function rulesList(course) {
+  const rules = describeRules(course);
+  if (!rules.length) return '';
+  return `<ul class="rules-list">${rules.map((r) => `<li><span>✦ ${esc(r.text)}</span>${sourceTag(r.source)}</li>`).join('')}</ul>`;
+}
+
 // ---------- The final ----------
+
+function passWarning(course) {
+  const min = course.rules?.passExams;
+  const avg = examAverage(course);
+  if (!min || avg === null || avg >= min) return '';
+  return `<p class="warn">Your exam average is ${formatScore(avg)}, and this class needs ${min} on the exams to pass. That matters more than the letter above.</p>`;
+}
 
 function renderGrades() {
   return `<div class="stack">${state.courses.map(gradeCard).join('')}</div>`;
@@ -157,6 +178,15 @@ function gradeCard(course) {
       ${big}
       ${final && row.needed !== null ? `<p class="tiny muted">Assumes the rest of your ungraded work goes the way that category has gone so far.</p>` : ''}
     </div>
+
+    ${passWarning(course)}
+    ${describeRules(course).length ? `
+    <details class="fine-print" data-key="rules-${course.id}">
+      <summary>Syllabus rules <small class="muted">(${describeRules(course).length}, already in the math)</small></summary>
+      ${rulesList(course)}
+      ${course.rules?.extraCreditMax ? `<label class="inline">Extra credit you've earned
+        <input type="number" min="0" step="0.5" max="${course.rules.extraCreditMax}" value="${course.extraCredit ?? ''}" placeholder="0" data-path="courses.${ci}.extraCredit" data-type="optnumber"> points</label>` : ''}
+    </details>` : ''}
 
     <details class="ladder" data-key="ladder-${course.id}">
       <summary>Every letter</summary>
@@ -393,17 +423,31 @@ function classCard(course, ci) {
 
     <h3>Grade weights <small class="muted">(from the syllabus)</small></h3>
     <table class="edit">
-      <thead><tr><th>Category</th><th>Weight %</th><th>Drop lowest</th><th></th></tr></thead>
+      <thead><tr><th>Category</th><th>Weight %</th><th>Drop lowest</th><th title="Earning this % of the points counts as 100%">Full credit at %</th><th></th></tr></thead>
       <tbody>
         ${course.categories.map((cat, ki) => `<tr>
           <td><input value="${esc(cat.name)}" data-path="${p}.categories.${ki}.name" aria-label="Category"></td>
           <td><input type="number" min="0" max="100" step="any" value="${cat.weight}" data-path="${p}.categories.${ki}.weight" data-type="number" aria-label="Weight"></td>
           <td><input type="number" min="0" step="1" value="${cat.dropLowest ?? 0}" data-path="${p}.categories.${ki}.dropLowest" data-type="number" aria-label="Drop lowest"></td>
+          <td><input type="number" min="1" max="100" step="any" value="${cat.fullCreditAt ?? ''}" placeholder="100" data-path="${p}.categories.${ki}.fullCreditAt" data-type="optnumber" aria-label="Full credit at"></td>
           <td><button class="x" data-action="del-category" data-course="${ci}" data-index="${ki}" aria-label="Remove">×</button></td>
         </tr>`).join('')}
       </tbody>
     </table>
     <button class="ghost small" data-action="add-category" data-course="${ci}">+ Category</button>
+
+    <h3>Syllabus rules <small class="muted">(the fine print that changes the math)</small></h3>
+    <div class="rules-edit">
+      <label class="radio"><input type="checkbox" data-path="${p}.rules.roundAt" data-type="round" ${course.rules?.roundAt ? 'checked' : ''}><span>Final grade rounds up at .5 <small class="muted">(89.5 → 90)</small></span></label>
+      <label class="radio"><input type="checkbox" data-path="${p}.rules.finalReplacesLowest" data-type="bool" ${course.rules?.finalReplacesLowest ? 'checked' : ''}><span>The final replaces my lowest exam if it's higher</span></label>
+      <div class="grid2">
+        <label>Exam average needed to pass <input type="number" min="0" max="100" value="${course.rules?.passExams ?? ''}" placeholder="none" data-path="${p}.rules.passExams" data-type="optnumber"></label>
+        <label>Extra credit, at most (points) <input type="number" min="0" max="20" step="0.5" value="${course.rules?.extraCreditMax ?? ''}" placeholder="none" data-path="${p}.rules.extraCreditMax" data-type="optnumber"></label>
+      </div>
+      <p class="tiny muted">Grading scale: ${(course.scale ?? DEFAULT_SCALE).filter(([, m]) => m > 0).map(([l, m]) => `${l} ${m}`).join(' · ')}
+        ${course.scale ? `<button class="linkish" data-action="reset-scale" data-course="${ci}">use the standard scale</button>` : ''}</p>
+      ${describeRules(course).some((r) => r.source) ? `<details class="src-all" data-key="src-${course.id}"><summary>Where these came from</summary>${rulesList(course)}</details>` : ''}
+    </div>
 
     <h3>Everything that gets graded</h3>
     <div class="table-scroll">
@@ -492,13 +536,14 @@ function reviewCard(entry) {
     <div class="review-grid">
       <div>
         <h4>Grade weights <span class="${Math.abs(total - 100) < 0.6 ? 'ok' : 'bad'}">${Math.round(total * 10) / 10}%</span></h4>
-        <ul class="plain">${c.categories.map((k) => `<li><span>${esc(k.name)}${byCat(k.id) > 1 ? ` <small class="muted">×${byCat(k.id)}</small>` : ''}${k.dropLowest ? ` <small class="muted">drop ${k.dropLowest}</small>` : ''}</span><b>${k.weight}%</b></li>`).join('') || '<li class="muted">None found</li>'}</ul>
+        <ul class="plain sourced">${c.categories.map((k) => `<li><div class="row-main"><span>${esc(k.name)}${byCat(k.id) > 1 ? ` <small class="muted">×${byCat(k.id)}</small>` : ''}</span><b>${k.weight}%</b></div>${sourceTag(k.source?.weight, k.check)}</li>`).join('') || '<li class="muted">None found</li>'}</ul>
+        ${describeRules(c).length ? `<h4>The fine print</h4>${rulesList(c)}` : ''}
       </div>
       <div>
         <h4>Class times</h4>
-        <ul class="plain">${c.meetings.map((m) => `<li>${describeMeeting(m)}</li>`).join('') || '<li class="muted">None found</li>'}</ul>
+        <ul class="plain sourced">${c.meetings.map((m, mi) => `<li><div class="row-main"><span>${describeMeeting(m)}</span></div>${mi === 0 ? sourceTag(c.sources?.meetings) : ''}</li>`).join('') || '<li class="muted">None found</li>'}</ul>
         <h4>Dates</h4>
-        <ul class="plain">${dated.map((i) => `<li><span>${esc(i.name)}</span><span class="muted">${shortDate(i.date)}${i.time ? `, ${formatTime(parseTime(i.time))}` : ''}</span></li>`).join('') || '<li class="muted">None found</li>'}</ul>
+        <ul class="plain sourced">${dated.map((i) => `<li><div class="row-main"><span>${esc(i.name)}</span><span class="muted">${shortDate(i.date)}${i.time ? `, ${formatTime(parseTime(i.time))}` : ''}</span></div>${sourceTag(i.source)}</li>`).join('') || '<li class="muted">None found</li>'}</ul>
       </div>
     </div>
     <div class="row-actions">
@@ -529,7 +574,7 @@ async function readSyllabus(fileName, getText, via = reader.mode, existing = nul
       found = parseSyllabus(entry.text, { ref });
     }
     const color = PALETTE[(state.courses.length + imports.indexOf(entry)) % PALETTE.length];
-    Object.assign(entry, toCourse(found, { id: uid(), color, semester: state.semester, uid }), { status: 'done' });
+    Object.assign(entry, toCourse(found, { id: uid(), color, semester: state.semester, uid, text: entry.text }), { status: 'done' });
   } catch (err) {
     Object.assign(entry, { status: 'error', error: err.message || String(err) });
   }
@@ -604,6 +649,21 @@ function setField(el) {
   }
   const type = el.dataset.type;
   const raw = el.value;
+  if (type === 'bool') {
+    if (el.checked) obj[key] = true;
+    else delete obj[key];
+    return;
+  }
+  if (type === 'round') {
+    if (el.checked) obj[key] = 0.5;
+    else delete obj[key];
+    return;
+  }
+  if (type === 'optnumber') {
+    if (raw === '' || Number(raw) === 0) delete obj[key];
+    else obj[key] = Number(raw);
+    return;
+  }
   if (type === 'score') obj[key] = raw === '' ? null : Number(raw);
   else if (type === 'number') obj[key] = raw === '' ? 0 : Number(raw);
   else if (type === 'minutes') obj[key] = parseTime(raw || '00:00');
@@ -661,6 +721,7 @@ document.addEventListener('click', (e) => {
       state.courses.push(entry.course);
       imports = imports.filter((i) => i !== entry);
     },
+    'reset-scale'() { delete course.scale; },
     'discard-import'() { imports = imports.filter((i) => i.id !== btn.dataset.id); },
     'retry-import'() {
       const entry = imports.find((i) => i.id === btn.dataset.id);

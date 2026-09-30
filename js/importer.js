@@ -27,7 +27,36 @@ function tokens(s) {
   return new Set(normalizeName(s).toLowerCase().split(/[^a-z0-9]+/).filter((t) => t && t !== 'exam'));
 }
 
-export function toCourse(found, { id, color, semester, uid }) {
+function cleanSources(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj ?? {})) if (typeof v === 'string' && v.trim()) out[k] = v.trim().slice(0, 300);
+  return out;
+}
+
+const squash = (s) => s.toLowerCase().replace(/[^a-z0-9%.]+/g, '');
+
+/** True when a quote really is in the syllabus (ignoring spacing, case and punctuation). */
+export function appearsIn(text, quote) {
+  const q = squash(quote);
+  return q.length > 0 && squash(text).includes(q);
+}
+
+const LETTERS = ['A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D', 'D-', 'F'];
+
+function validScale(scale) {
+  if (!Array.isArray(scale) || scale.length < 3) return null;
+  const rows = scale
+    .map((r) => (Array.isArray(r) ? r : [r?.letter, r?.min]))
+    .filter(([l, m]) => LETTERS.includes(l) && Number.isFinite(Number(m)))
+    .map(([l, m]) => [l, Number(m)]);
+  if (!rows.length || rows[0][0] !== 'A') return null;
+  for (let i = 1; i < rows.length; i++) if (rows[i][1] >= rows[i - 1][1]) return null;
+  if (rows.at(-1)[0] !== 'F') rows.push(['F', 0]);
+  else rows[rows.length - 1] = ['F', 0];
+  return rows;
+}
+
+export function toCourse(found, { id, color, semester, uid, text }) {
   const warnings = [];
   const categories = [];
   const items = [];
@@ -36,6 +65,10 @@ export function toCourse(found, { id, color, semester, uid }) {
     const weight = Number(c.weight);
     if (!c.name || !Number.isFinite(weight) || weight <= 0) continue;
     const cat = { id: uid(), name: String(c.name).slice(0, 60), weight, dropLowest: Math.max(0, Math.floor(c.dropLowest || 0)) };
+    const full = Number(c.fullCreditAt);
+    if (full > 0 && full < 100) cat.fullCreditAt = full;
+    cat.source = cleanSources(c.source ?? { weight: c.quote });
+    if (c.check) cat.check = true;
     categories.push(cat);
     const kind = KINDS.includes(c.kind) ? c.kind : kindFor(cat.name);
     const count = Math.min(30, Math.max(1, Math.floor(c.count || 1)));
@@ -49,6 +82,7 @@ export function toCourse(found, { id, color, semester, uid }) {
         time: count === 1 && TIME_RE.test(c.time ?? '') ? c.time : undefined,
         possible: 100,
         earned: null,
+        ...(count === 1 && c.date ? { source: cat.source.weight } : {}),
       });
     }
     if (cat.dropLowest >= count && count > 1) cat.dropLowest = 0;
@@ -68,6 +102,7 @@ export function toCourse(found, { id, color, semester, uid }) {
     if (target) {
       target.date = ex.date;
       if (TIME_RE.test(ex.time ?? '')) target.time = ex.time;
+      if (ex.source ?? ex.quote) target.source = String(ex.source ?? ex.quote).slice(0, 300);
     } else {
       unmatched.push(ex);
     }
@@ -85,6 +120,7 @@ export function toCourse(found, { id, color, semester, uid }) {
       name: ex.name,
       date: ex.date,
       time: TIME_RE.test(ex.time ?? '') ? ex.time : undefined,
+      source: ex.source ?? ex.quote,
     })));
     unmatched.length = 0;
   }
@@ -116,9 +152,42 @@ export function toCourse(found, { id, color, semester, uid }) {
   }
   for (const ex of unmatched) warnings.push(`Found "${ex.name}" on ${ex.date}, but not which grade category it belongs to.`);
 
+  const rules = {};
+  const r = found.rules ?? {};
+  if (Number(r.roundAt) > 0 && Number(r.roundAt) < 1) rules.roundAt = Number(r.roundAt);
+  if (r.finalReplacesLowest === true) rules.finalReplacesLowest = true;
+  if (Number(r.passExams) > 0 && Number(r.passExams) <= 100) rules.passExams = Number(r.passExams);
+  if (Number(r.extraCreditMax) > 0 && Number(r.extraCreditMax) <= 20) rules.extraCreditMax = Number(r.extraCreditMax);
+  const scale = validScale(found.scale);
+
+  // A reader (especially an AI one) must be able to point at the syllabus.
+  // Anything it quotes that isn't actually there gets flagged for a look.
+  const sources = cleanSources(found.sources ?? {});
+  if (text) {
+    const where = (q) => !q || appearsIn(text, q);
+    for (const cat of categories) {
+      if (!where(cat.source.weight)) {
+        cat.check = true;
+        warnings.push(`Couldn't find "${cat.name} ${cat.weight}%" word for word in your syllabus. Double-check it.`);
+      }
+    }
+    for (const [key, quote] of Object.entries(sources)) {
+      if (!where(quote)) {
+        delete sources[key];
+        if (key in rules) {
+          delete rules[key];
+          warnings.push(`Skipped a rule the reader couldn't point to in your syllabus (${key}).`);
+        }
+      }
+    }
+  }
+
   return {
     course: {
       id,
+      rules,
+      ...(scale ? { scale } : {}),
+      sources,
       code: String(found.code ?? '').slice(0, 20),
       name: String(found.name ?? '').slice(0, 80),
       color,

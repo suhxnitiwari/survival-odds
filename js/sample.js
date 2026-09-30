@@ -20,13 +20,14 @@ export function sampleSemester(today) {
   const rand = seeded(333);
   let n = 0;
 
-  function course(code, name, color, target, meetings, vibe, categories, items) {
+  function course(code, name, color, target, meetings, vibe, categories, items, rules = {}) {
     return {
       id: code.replace(/\W/g, '').toLowerCase(),
       code,
       name,
       color,
       target,
+      rules,
       meetings,
       categories: categories.map(([id, label, weight, dropLowest = 0]) => ({ id, name: label, weight, dropLowest })),
       items: items.map(([category, itemName, kind, week, day, possible, extra = {}]) => {
@@ -61,7 +62,7 @@ export function sampleSemester(today) {
           ['e1', 'Exam 1', 'exam', 5, 3, 100, { time: '15:30' }],
           ['e2', 'Exam 2', 'exam', 12, 3, 100, { time: '15:30' }],
           ['proj', 'Final Project', 'project', 15, 5, 100, { final: true }],
-        ]),
+        ], { roundAt: 0.5 }),
       course('MKT 150', 'Marketing Basics', '#7048e8', 'B',
         [{ days: [2, 4], start: '11:00', end: '12:30' }], 0.9,
         [['exams', 'Exams', 60], ['cases', 'Case write-ups', 25], ['part', 'Participation', 15]],
@@ -71,7 +72,7 @@ export function sampleSemester(today) {
           ['exams', 'Exam 3', 'exam', 16, 2, 100, { time: '11:00', final: true }],
           ...hw('cases', 'Case', 'paper', [4, 8, 13], 5, 50),
           ['part', 'Participation', 'participation', 16, 4, 100],
-        ]),
+        ], { finalReplacesLowest: true }),
       course('PSY 101', 'Intro to Psychology', '#0c8599', 'B-',
         [{ days: [1, 3], start: '10:00', end: '11:30' }], 0.9,
         [['mid', 'Midterm', 25], ['final', 'Final', 30], ['refl', 'Reflections', 20], ['team', 'Team project', 25]],

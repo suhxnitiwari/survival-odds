@@ -47,40 +47,147 @@ export function letterFor(score, scale = DEFAULT_SCALE) {
   return scale.find(([, cutoff]) => score >= cutoff - 1e-9)?.[0] ?? scale.at(-1)[0];
 }
 
+// ---------- syllabus rules ----------
+//
+// Real syllabi bend the weighted average. The rules a course can have:
+//   course.rules.roundAt              "91.5% rounds up to 92%" → 0.5
+//   course.rules.finalReplacesLowest  the final's score replaces your lowest exam, if it's higher
+//   course.rules.passExams            your exam average must be at least this to pass (a warning)
+//   course.rules.extraCreditMax       extra credit adds at most this many points (course.extraCredit)
+//   category.fullCreditAt             earning this % of a category's points counts as 100%
+
+function finalExamId(course) {
+  const exams = course.items.filter((i) => i.kind === 'exam');
+  return (exams.find((i) => i.id === course.rules?.finalId)
+    ?? exams.find((i) => i.final)
+    ?? [...exams].sort((a, b) => ((a.date ?? '') < (b.date ?? '') ? 1 : -1))[0])?.id ?? null;
+}
+
+/** Your scores as fractions (0.93), after "the final replaces your lowest exam". */
+function applyReplacement(course, values) {
+  if (!course.rules?.finalReplacesLowest) return values;
+  const finalId = finalExamId(course);
+  if (!values.has(finalId)) return values;
+  const others = course.items.filter((i) => i.kind === 'exam' && i.id !== finalId && values.has(i.id));
+  if (!others.length) return values;
+  const lowest = others.reduce((a, b) => (values.get(b.id) < values.get(a.id) ? b : a));
+  const out = new Map(values);
+  if (values.get(finalId) > values.get(lowest.id)) out.set(lowest.id, values.get(finalId));
+  return out;
+}
+
 /**
- * current:  your grade on what's been graded so far (0–100)
+ * The weighted score (0–100) over the items that have a value, plus how much
+ * of the course those items cover (0–1).
+ */
+function scoreWith(course, values) {
+  const weights = itemWeights(course);
+  const v = applyReplacement(course, values);
+  let points = 0;
+  let counted = 0;
+  for (const cat of course.categories) {
+    let w = 0;
+    let earned = 0;
+    for (const item of course.items) {
+      if (item.category !== cat.id || !v.has(item.id)) continue;
+      const share = weights.get(item.id)?.weight ?? 0;
+      w += share;
+      earned += share * v.get(item.id);
+    }
+    if (w < 1e-12) continue;
+    let frac = earned / w;
+    if (cat.fullCreditAt > 0) frac = Math.min(1, frac / (cat.fullCreditAt / 100));
+    points += w * frac;
+    counted += w;
+  }
+  return { points: points * 100, counted };
+}
+
+/** The number on your transcript: extra credit added, then the syllabus's rounding. */
+export function finishGrade(course, raw) {
+  if (raw === null) return null;
+  const extra = Math.min(Number(course.extraCredit) || 0, course.rules?.extraCreditMax ?? Infinity);
+  const score = raw + Math.max(0, extra);
+  const at = course.rules?.roundAt;
+  if (at === undefined || at === null) return score;
+  const floor = Math.floor(score + 1e-9);
+  return score - floor >= at - 1e-9 ? floor + 1 : score;
+}
+
+function graded(course) {
+  return new Map(course.items.filter(isGraded).map((i) => [i.id, pct(i)]));
+}
+
+/** Where each ungraded item is headed: that category's average so far, else `fallback`. */
+function projected(course, fallback) {
+  const values = graded(course);
+  for (const item of course.items) {
+    if (isGraded(item)) continue;
+    const done = course.items.filter((i) => i.category === item.category && isGraded(i));
+    const possible = done.reduce((sum, i) => sum + i.possible, 0);
+    values.set(item.id, possible > 0 ? done.reduce((sum, i) => sum + i.earned, 0) / possible : fallback);
+  }
+  return values;
+}
+
+/**
+ * current:  your grade on what's been graded so far (0–100), before rounding
+ * final:    that grade with extra credit and rounding, the one the letter uses
  * locked:   points of the final grade you've already banked (0–100)
  * graded / remaining: share of the course that is graded / still ahead (0–1)
  */
 export function summarize(course) {
   const weights = itemWeights(course);
-  let locked = 0;
-  let graded = 0;
+  const { points, counted } = scoreWith(course, graded(course));
   let remaining = 0;
   for (const item of course.items) {
-    const { weight } = weights.get(item.id) ?? { weight: 0 };
-    if (isGraded(item)) {
-      locked += weight * pct(item);
-      graded += weight;
-    } else {
-      remaining += weight;
-    }
+    if (!isGraded(item)) remaining += weights.get(item.id)?.weight ?? 0;
   }
-  const current = graded > 0 ? (locked / graded) * 100 : null;
-  return {
-    current,
-    letter: letterFor(current, course.scale),
-    locked: locked * 100,
-    graded,
-    remaining,
-  };
+  const current = counted > 0 ? points / counted : null;
+  const final = finishGrade(course, current);
+  return { current, final, letter: letterFor(final, course.scale), locked: points, graded: counted, remaining };
+}
+
+/** Your exam average so far (0–100), for "you must pass the exams" rules. */
+export function examAverage(course) {
+  const values = applyReplacement(course, graded(course));
+  const exams = course.items.filter((i) => i.kind === 'exam' && values.has(i.id));
+  const possible = exams.reduce((s, i) => s + i.possible, 0);
+  return possible ? (exams.reduce((s, i) => s + values.get(i.id) * i.possible, 0) / possible) * 100 : null;
+}
+
+// Every rule keeps "a higher score never lowers your grade" true, so the
+// smallest score that reaches the target can be found by bisection.
+function smallestScore(gradeAt, target) {
+  if (gradeAt(0) >= target - 1e-9) return 0;
+  let hi = 100;
+  while (gradeAt(hi) < target - 1e-9) {
+    hi *= 2;
+    if (hi > 1e4) return Infinity;
+  }
+  let lo = 0;
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    if (gradeAt(mid) >= target - 1e-9) hi = mid;
+    else lo = mid;
+  }
+  return hi;
+}
+
+function totalGrade(course, values) {
+  const { points, counted } = scoreWith(course, values);
+  return finishGrade(course, counted > 0 ? points / counted : 0);
 }
 
 /** The average you need on everything not graded yet to finish at `target`. */
 export function neededOnRemaining(course, target) {
-  const s = summarize(course);
-  if (s.remaining < 1e-9) return null;
-  return (target - s.locked) / s.remaining;
+  if (summarize(course).remaining < 1e-9) return null;
+  const open = course.items.filter((i) => !isGraded(i));
+  return smallestScore((x) => {
+    const values = graded(course);
+    for (const item of open) values.set(item.id, x / 100);
+    return totalGrade(course, values);
+  }, target);
 }
 
 /** The item treated as "the final": your pick, one marked final, else the last ungraded exam. */
@@ -98,25 +205,14 @@ export function pickFinal(course) {
  * overall average, or your target if nothing is graded yet).
  */
 export function neededOnItem(course, itemId, target) {
-  const weights = itemWeights(course);
+  if ((itemWeights(course).get(itemId)?.weight ?? 0) < 1e-9) return null;
   const s = summarize(course);
-  const fallback = s.current !== null ? s.current / 100 : target / 100;
-  let banked = 0;
-  for (const item of course.items) {
-    if (item.id === itemId) continue;
-    const { weight } = weights.get(item.id) ?? { weight: 0 };
-    if (isGraded(item)) {
-      banked += weight * pct(item);
-    } else {
-      const done = course.items.filter((i) => i.category === item.category && isGraded(i));
-      const possible = done.reduce((sum, i) => sum + i.possible, 0);
-      const avg = possible > 0 ? done.reduce((sum, i) => sum + i.earned, 0) / possible : fallback;
-      banked += weight * avg;
-    }
-  }
-  const own = weights.get(itemId)?.weight ?? 0;
-  if (own < 1e-9) return null;
-  return ((target / 100 - banked) / own) * 100;
+  const base = projected(course, s.current !== null ? s.current / 100 : target / 100);
+  return smallestScore((x) => {
+    const values = new Map(base);
+    values.set(itemId, x / 100);
+    return totalGrade(course, values);
+  }, target);
 }
 
 /** "What do I need on the final?" for every letter on the scale. */
@@ -132,18 +228,39 @@ export function finalTable(course) {
     }));
 }
 
+/** The rules in effect, in plain English, with where each came from. */
+export function describeRules(course) {
+  const out = [];
+  const r = course.rules ?? {};
+  const src = course.sources ?? {};
+  if (r.roundAt !== undefined && r.roundAt !== null) out.push({ key: 'roundAt', text: `Rounds up at .${String(r.roundAt).split('.')[1] ?? '5'} (a ${90 + r.roundAt} becomes a 91)`, source: src.roundAt });
+  if (r.finalReplacesLowest) out.push({ key: 'finalReplacesLowest', text: 'Your final replaces your lowest exam if it’s higher', source: src.finalReplacesLowest });
+  if (r.passExams) out.push({ key: 'passExams', text: `Exam average must be at least ${r.passExams}% to pass`, source: src.passExams });
+  if (r.extraCreditMax) out.push({ key: 'extraCreditMax', text: `Up to ${r.extraCreditMax} point${r.extraCreditMax === 1 ? '' : 's'} of extra credit`, source: src.extraCreditMax });
+  for (const cat of course.categories) {
+    if (cat.fullCreditAt) out.push({ key: `full-${cat.id}`, text: `${cat.name}: ${cat.fullCreditAt}% of the points counts as full credit`, source: cat.source?.fullCreditAt });
+    if (cat.dropLowest) out.push({ key: `drop-${cat.id}`, text: `${cat.name}: lowest ${cat.dropLowest === 1 ? 'one' : cat.dropLowest} dropped`, source: cat.source?.dropLowest });
+  }
+  if (course.scale && course.scale !== DEFAULT_SCALE) {
+    const a = course.scale.find(([l]) => l === 'A');
+    if (a && a[1] !== 93) out.push({ key: 'scale', text: `Grading scale from the syllabus (an A starts at ${a[1]})`, source: src.scale });
+  }
+  return out;
+}
+
 function article(letter) {
   return /^[AEF]/.test(letter) ? 'an' : 'a';
 }
 
 export function formatScore(n) {
+  if (n > 150) return '150+';
   return Number.isInteger(Math.round(n * 10) / 10) ? String(Math.round(n)) : n.toFixed(1);
 }
 
 /** The one-liner under the big number. */
 export function verdict(needed, letter, nextLetter) {
   if (needed === null) return "Everything's graded. It is what it is ✦";
-  const n = formatScore(Math.max(0, Math.ceil(needed * 10) / 10));
+  const n = formatScore(Math.max(0, Math.ceil(needed * 10 - 1e-6) / 10));
   const grade = `${article(letter)} ${letter}`;
   if (needed <= 0) return `You've already locked in ${grade}. Show up anyway.`;
   if (needed <= 65) return `You need a ${n} for ${grade}. You're fine. Go to Cosmic.`;

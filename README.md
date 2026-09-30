@@ -16,6 +16,26 @@ It runs entirely in your browser. No accounts, no server, and nobody else sees y
 | --- | --- |
 | ![Study plan](docs/plan.png) | ![Semester Wrapped](docs/wrapped.png) |
 
+## Why not just use a grade calculator?
+
+There are lots of "what do I need on the final" apps and AI syllabus scanners. They all run a plain weighted average, and they ask you to trust whatever the AI read. Survival Odds does two things differently:
+
+**1. It reads the fine print and puts it in the math.** Real syllabi bend the weighted average:
+
+| Rule in the syllabus | What Survival Odds does |
+| --- | --- |
+| "Decimals will be rounded up at 0.5%" | Rounds before picking the letter, so a 92.5 counts as a 93 |
+| "You only need 85% of the participation points for full credit" | Counts 85% of that category as 100% |
+| "Your final replaces your lowest exam if it's higher" | Applies the swap whenever it helps |
+| "We'll drop your lowest quiz" | Drops it once the category is fully graded |
+| "You must average 60% on the exams to pass" | Warns you when your exam average is below it |
+| "Extra credit is worth up to 1%" | Adds what you've earned, capped at the limit |
+| A printed scale ("A 92–100, A- 89–91…") | Uses that scale instead of the standard one |
+
+Rules like rounding make the math non-linear, so "what you need" isn't one formula anymore. Every rule keeps *a higher score never lowers your grade* true, so the app finds the smallest score that reaches your target by bisection over the full grade calculation.
+
+**2. Every number shows where it came from.** Tap *from your syllabus* under any weight, date, class time or rule to see the exact line it was read from. When the Gemini reader quotes something that isn't actually in your syllabus, that number is flagged *check this*, and a rule it can't back up is dropped.
+
 ## Reading a syllabus
 
 Drop in one or more PDFs, or paste the text. Pick who reads it:
@@ -38,6 +58,7 @@ Syllabi don't share a format, so [`js/parser.js`](js/parser.js) looks for the *s
 | **Class times** | `MW 11:00am-12:15pm`, `Tue/Thu 11:00 AM - 12:30 PM`, `Mondays & Wednesdays`, `TTh`, `T/Th`, `TR`… Office hours and review sessions are skipped. |
 | **Exam dates** | Lines naming an exam and a date (`Exam 1 - Oct. 12`, `W 3/4 Exam 1`). Review days don't count. Dates with no year go to the closest semester. |
 | **Drop the lowest** | "We'll drop your lowest quiz" sets the Quizzes category to drop one. |
+| **Fine print** | Rounding, full-credit thresholds, final-replaces-lowest, exam minimums, extra credit caps and printed grading scales, each kept with the sentence it came from. |
 
 While building it I tested it against real syllabi from 7 different courses, with very different layouts. It found weights adding to exactly 100% in all 7. The tests use made-up syllabi written in those same layouts.
 
@@ -71,7 +92,7 @@ It's plain HTML, CSS and JavaScript modules. There's no build step.
 
 ```bash
 python3 -m http.server 8000     # then open http://localhost:8000
-npm test                        # 40 tests, Node 22+
+npm test                        # 52 tests, Node 22+
 ```
 
 Open `?example` to see a made-up semester without touching your saved data.
@@ -83,7 +104,7 @@ index.html
 css/style.css
 js/
   app.js        UI: tabs, forms, review cards, downloads
-  grades.js     weights, current grade, what you need on the final
+  grades.js     weights, syllabus rules, current grade, what you need on the final
   planner.js    study blocks, the rules as data
   parser.js     the built-in syllabus reader
   importer.js   turns a reader's result into a class, with checks and warnings

@@ -5,6 +5,8 @@
 
 export const DEFAULT_MODEL = 'gemini-flash-latest';
 
+const QUOTE = { type: 'STRING', description: 'The exact sentence or table row from the syllabus this came from, copied word for word' };
+
 const SCHEMA = {
   type: 'OBJECT',
   properties: {
@@ -18,8 +20,9 @@ const SCHEMA = {
           days: { type: 'ARRAY', items: { type: 'INTEGER' }, description: '0=Sun, 1=Mon … 6=Sat' },
           start: { type: 'STRING', description: '24-hour HH:MM' },
           end: { type: 'STRING', description: '24-hour HH:MM' },
+          quote: QUOTE,
         },
-        required: ['days', 'start', 'end'],
+        required: ['days', 'start', 'end', 'quote'],
       },
     },
     categories: {
@@ -31,11 +34,13 @@ const SCHEMA = {
           weight: { type: 'NUMBER', description: 'Percent of the final grade' },
           count: { type: 'INTEGER', description: 'How many graded items, if stated' },
           dropLowest: { type: 'INTEGER' },
+          fullCreditAt: { type: 'NUMBER', description: 'If earning this percent of the points counts as full credit (e.g. 85), else omit' },
           kind: { type: 'STRING', enum: ['exam', 'quiz', 'homework', 'project', 'paper', 'participation'] },
           date: { type: 'STRING', description: 'YYYY-MM-DD, only if the category is a single dated item' },
           time: { type: 'STRING', description: '24-hour HH:MM' },
+          quote: QUOTE,
         },
-        required: ['name', 'weight', 'kind'],
+        required: ['name', 'weight', 'kind', 'quote'],
       },
     },
     items: {
@@ -48,13 +53,63 @@ const SCHEMA = {
           kind: { type: 'STRING', enum: ['exam', 'quiz', 'homework', 'project', 'paper', 'participation'] },
           date: { type: 'STRING', description: 'YYYY-MM-DD' },
           time: { type: 'STRING', description: '24-hour HH:MM' },
+          quote: QUOTE,
         },
-        required: ['name', 'kind', 'date'],
+        required: ['name', 'kind', 'date', 'quote'],
       },
     },
+    rules: {
+      type: 'OBJECT',
+      description: 'Only rules the syllabus actually states. Leave out anything not stated.',
+      properties: {
+        roundAt: { type: 'NUMBER', description: 'If final grades round up at a decimal, e.g. 0.5' },
+        roundAtQuote: QUOTE,
+        finalReplacesLowest: { type: 'BOOLEAN', description: 'The final exam score replaces the lowest exam score' },
+        finalReplacesLowestQuote: QUOTE,
+        passExams: { type: 'NUMBER', description: 'Minimum exam average (percent) required to pass the course' },
+        passExamsQuote: QUOTE,
+        extraCreditMax: { type: 'NUMBER', description: 'Most extra credit, in percentage points of the final grade' },
+        extraCreditMaxQuote: QUOTE,
+      },
+    },
+    scale: {
+      type: 'ARRAY',
+      description: "The letter grade scale if the syllabus prints one, highest first, each letter's minimum percent",
+      items: {
+        type: 'OBJECT',
+        properties: { letter: { type: 'STRING' }, min: { type: 'NUMBER' } },
+        required: ['letter', 'min'],
+      },
+    },
+    scaleQuote: QUOTE,
   },
   required: ['code', 'categories'],
 };
+
+/** Gemini's answer → the shape the built-in parser returns. */
+export function fromGemini(out) {
+  const r = out.rules ?? {};
+  const rules = {};
+  const sources = {};
+  for (const key of ['roundAt', 'finalReplacesLowest', 'passExams', 'extraCreditMax']) {
+    if (r[key] !== undefined && r[key] !== null && r[key] !== false) {
+      rules[key] = r[key];
+      if (r[`${key}Quote`]) sources[key] = r[`${key}Quote`];
+    }
+  }
+  if (out.scaleQuote) sources.scale = out.scaleQuote;
+  if (out.meetings?.[0]?.quote) sources.meetings = out.meetings[0].quote;
+  return {
+    code: out.code,
+    name: out.name,
+    meetings: out.meetings ?? [],
+    categories: (out.categories ?? []).map((c) => ({ ...c, source: { weight: c.quote } })),
+    items: (out.items ?? []).map((i) => ({ ...i, source: i.quote })),
+    rules,
+    sources,
+    scale: out.scale,
+  };
+}
 
 function prompt(text, ref) {
   return `You read college syllabi. Extract the course code and title, the regular class meeting times (not office hours), the grade breakdown, and every exam or major deadline with a date.
@@ -65,6 +120,8 @@ Rules:
 - Only include dates that are actually written in the syllabus. Never guess a date.
 - Dates without a year belong to the semester around ${ref}.
 - Use the same names for items as the categories do (for example "Exam 1", not "First exam").
+- Also find the fine print that changes the math: rounding, a final that replaces the lowest exam, a minimum exam average to pass, extra credit caps, "you only need X% of the points for full credit", and a printed letter-grade scale.
+- For every number you report, include "quote": the exact text from the syllabus, copied word for word. It will be checked against the syllabus, and anything that can't be found will be flagged.
 
 Syllabus:
 """
@@ -93,7 +150,7 @@ export async function readWithGemini(text, { apiKey, model = DEFAULT_MODEL, ref,
   const data = await res.json();
   const out = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
   try {
-    return JSON.parse(out);
+    return fromGemini(JSON.parse(out));
   } catch {
     throw new Error("Gemini's answer wasn't readable. Try again, or use the built-in reader.");
   }

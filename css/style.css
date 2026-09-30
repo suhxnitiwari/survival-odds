@@ -248,3 +248,26 @@ textarea {
 @media (max-width: 600px) { .review-grid { grid-template-columns: 1fr; } }
 .top-actions { align-items: center; flex-wrap: wrap; }
 a.primary { text-decoration: none; }
+
+/* ---------- sources & fine print ---------- */
+.sourced li { display: block; }
+.row-main { display: flex; justify-content: space-between; gap: 0.5rem; }
+.src { margin: 0.1rem 0 0; }
+.src > summary { margin: 0; font-size: 0.72rem; font-weight: 500; color: var(--muted); list-style: none; display: inline-flex; gap: 0.35rem; align-items: center; }
+.src > summary::-webkit-details-marker { display: none; }
+.src > summary::before { content: '¶'; color: var(--accent); }
+.src[open] > summary { color: var(--accent); }
+.src q {
+  display: block; margin: 0.3rem 0 0.2rem; padding: 0.4rem 0.6rem; border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 0 8px 8px 0;
+  font-size: 0.8rem; color: var(--ink); quotes: none;
+}
+.check { background: color-mix(in srgb, var(--tight) 18%, transparent); color: var(--tight); font-size: 0.68rem; font-weight: 700; padding: 0.05rem 0.4rem; border-radius: 99px; text-transform: uppercase; letter-spacing: 0.03em; }
+.rules-list { list-style: none; padding: 0; margin: 0.4rem 0 0; font-size: 0.88rem; }
+.rules-list li { padding: 0.3rem 0; border-bottom: 1px solid var(--line); }
+.fine-print { margin-top: 0.2rem; }
+.fine-print summary small { font-weight: 400; }
+label.inline { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.6rem; font-size: 0.85rem; }
+label.inline input { width: 5rem; }
+.rules-edit { display: grid; gap: 0.3rem; }
+.rules-edit .radio input { accent-color: var(--accent); }

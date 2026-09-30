@@ -12,7 +12,14 @@ Exam 2             15%
 Final Exam         20%
 Total             100%
 
+You only need 85% of the participation points to get full credit.
 We'll drop your lowest quiz. Late work loses 10% per day.
+Your final exam score will replace your lowest exam if it is higher.
+Decimals will be rounded up at 0.5% (e.g., 89.5% = 90%).
+
+Grading scale
+A 92-100   A- 89-91   B+ 86-88   B 82-85   B- 79-81
+C+ 76-78   C 72-75    C- 69-71   D 60-68   F below 60
 
 Schedule
 Tue Oct 6    Exam 1 review

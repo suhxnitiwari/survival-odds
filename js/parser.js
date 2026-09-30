@@ -106,7 +106,7 @@ export function findMeeting(lines) {
     if (!r[3] && start >= end) start -= 12 * 60;
     if (start < 7 * 60 || end <= start) return;
     const hint = /class|meet|day ?& ?time|lecture|section|\b\d{5}\b/i.test(line) ? 0 : 1;
-    scored.push({ hint, index, meeting: { days, start: hhmm(start), end: hhmm(end) } });
+    scored.push({ hint, index, meeting: { days, start: hhmm(start), end: hhmm(end), source: line } });
   });
   scored.sort((a, b) => a.hint - b.hint || a.index - b.index);
   return scored[0]?.meeting ?? null;
@@ -246,14 +246,14 @@ function withLabels(found, lines) {
       if (!meaningful(l)) continue;
       labels.push(tidyLabel(l));
     }
-    return labels.length === found.length ? found.map((c, k) => ({ ...c, label: labels[k] })) : found;
+    return labels.length === found.length ? found.map((c, k) => ({ ...c, label: labels[k], guessedLabel: true })) : found;
   }
   return found.map((c, k) => {
     if (c.hasLabel) return c;
     const from = k > 0 ? found[k - 1].index + 1 : Math.max(0, c.index - 2);
     for (let i = from; i < c.index; i++) {
       const l = clean(lines[i]);
-      if (l && meaningful(l) && !l.includes('%')) return { ...c, label: tidyLabel(l) };
+      if (l && meaningful(l) && !l.includes('%')) return { ...c, label: tidyLabel(l), guessedLabel: true };
     }
     return c;
   });
@@ -281,7 +281,7 @@ export function findExams(lines, ref) {
     const name = normalizeName(m[1].replace(/-/g, ''));
     if (/^Final$/i.test(name) && !/exam/i.test(line)) continue;
     const key = name.toLowerCase();
-    if (!exams.has(key)) exams.set(key, { name, kind: 'exam', date, time: findTime(line) });
+    if (!exams.has(key)) exams.set(key, { name, kind: 'exam', date, time: findTime(line), source: line });
   }
   return [...exams.values()];
 }
@@ -292,12 +292,120 @@ const WORD_NUM = { one: 1, two: 2, three: 3, four: 4 };
 
 export function findDrops(text) {
   const drops = [];
-  const re = /drop(?:s|ped)?\s+(?:your|the|each\s+student'?s?)?\s*(?:(\w+)\s+)?lowest\s+(?:(\w+)\s+)?(quiz|quizzes|lab|labs|homework|assignment|assignments|poll|polls|reflection|reflections|exercise|exercises)/gi;
+  const re = /drop(?:s|ped)?\s+(?:your|the|each\s+student'?s?)?\s*(?:(\w+)\s+)?lowest\s+(?:(\w+)\s+)?(quiz|quizzes|lab|labs|homework|assignment|assignments|poll|polls|reflection|reflections|exercise|exercises|exam|exams|midterm|midterms|test|tests)/gi;
   for (const m of text.matchAll(re)) {
     const word = (m[1] ?? m[2] ?? 'one').toLowerCase();
-    drops.push({ kind: kindFor(m[3]), what: m[3].toLowerCase(), n: WORD_NUM[word] ?? (Number(word) || 1) });
+    drops.push({ kind: kindFor(m[3]), what: m[3].toLowerCase(), n: WORD_NUM[word] ?? (Number(word) || 1), source: quoteAround(text, m.index) });
   }
   return drops;
+}
+
+// ---------- the fine print ----------
+
+/** The sentence around a position, to show as "from your syllabus". */
+export function quoteAround(text, index) {
+  const before = text.slice(Math.max(0, index - 200), index);
+  const boundary = Math.max(before.lastIndexOf('. '), before.lastIndexOf('! '), before.lastIndexOf('? '));
+  let start;
+  if (boundary >= 0) {
+    start = index - before.length + boundary + 2;
+  } else {
+    // No sentence start nearby (a table right above, say): back up to the
+    // capitalized word that opens this phrase, and no further.
+    const cap = before.slice(-30).search(/[A-Z][a-z']*\s[^A-Z]*$/);
+    start = cap >= 0 ? index - Math.min(30, before.length) + cap : index;
+  }
+  const endDot = text.indexOf('. ', index);
+  const ends = [endDot + 1, index + 240, text.length].filter((e) => e > index);
+  return clean(text.slice(start, Math.min(...ends)));
+}
+
+const RULES = [
+  {
+    key: 'noRounding',
+    re: /\b(?:not|no|never|won'?t|will not)\s+(?:be\s+)?round(?:ed|ing)?\b|\bno rounding\b/i,
+  },
+  {
+    key: 'roundAt',
+    re: /decimals?\s+(?:will\s+be\s+|are\s+)?rounded\s+up\s+at\s+0?\.5|(\d{2})\.5\s*%?\s*(?:=|→|->|becomes|will be|rounds?(?: up)? to)\s*(\d{2})\s*%?|\brounded?\s+(?:up\s+)?to\s+the\s+nearest\s+(?:whole|integer)|\bround(?:s|ed)?\s+up\s+(?:at|from)\s+(?:0?\.5|\d+\.5)/i,
+    value: () => 0.5,
+  },
+  {
+    key: 'finalReplacesLowest',
+    re: /final(?:\s+exam)?(?:\s+score|\s+grade)?\s+(?:will|can|may)?\s*(?:replace|substitute\s+for|count\s+in\s+place\s+of)s?\s+(?:your|the)?\s*lowest|(?:replace|drop)s?\s+(?:your|the)\s+lowest\s+(?:midterm|exam|test)(?:\s+score)?\s+with\s+(?:your|the)\s+final/i,
+    value: () => true,
+  },
+  {
+    key: 'passExams',
+    re: /(?:must|need\s+to)\s+(?:earn|have|achieve|get|maintain|pass\s+with)\s+(?:an?\s+)?(?:average\s+(?:of\s+)?)?(?:at\s+least\s+)?(\d{2})\s*%?\s*(?:or\s+(?:higher|better|above)\s+)?(?:average\s+)?on\s+(?:the\s+|your\s+)?(?:exams|tests)|exam\s+average\s+(?:of|must\s+be)\s+(?:at\s+least\s+)?(\d{2})/i,
+    value: (m) => Number(m[1] ?? m[2]),
+  },
+  {
+    key: 'extraCreditMax',
+    re: /extra\s+credit\s+(?:is\s+|will\s+be\s+)?(?:worth\s+)?(?:up\s+to\s+|a\s+maximum\s+of\s+|at\s+most\s+)?(?:an?\s+)?(\d+(?:\.\d+)?)\s*(?:%|percent|points?)|(?:earn|receive)\s+up\s+to\s+(\d+(?:\.\d+)?)\s*(?:%|percent|points?)\s+(?:of\s+)?extra\s+credit/i,
+    value: (m) => Number(m[1] ?? m[2]),
+  },
+];
+
+/** Syllabus rules that change the math, each with the sentence it came from. */
+export function findRules(text) {
+  const flat = text.replace(/\s+/g, ' ');
+  const rules = {};
+  const sources = {};
+  for (const rule of RULES) {
+    const m = flat.match(rule.re);
+    if (!m) continue;
+    if (rule.key === 'noRounding') {
+      sources.noRounding = quoteAround(flat, m.index);
+      continue;
+    }
+    rules[rule.key] = rule.value(m);
+    sources[rule.key] = quoteAround(flat, m.index);
+  }
+  if (sources.noRounding) delete rules.roundAt;
+  return { rules, sources };
+}
+
+/**
+ * "You only need 85% of the participation points to receive full credit" or
+ * "you can miss up to 15% of the points": returns [{ threshold, about, source }].
+ */
+export function findFullCredit(text) {
+  const flat = text.replace(/\s+/g, ' ');
+  const out = [];
+  const re = /(?:only\s+need\s+(?:to\s+(?:get|earn)\s+)?(?:at\s+least\s+)?(\d{2})\s*%\s+of\s+the|(?:allowed\s+to\s+)?miss\s+up\s+to\s+(\d{1,2})\s*%\s+of\s+the)\s+([^.]{0,80}?)points?[^.]{0,80}?full\s+credit(?:\s+for\s+([a-z/ -]+))?/gi;
+  for (const m of flat.matchAll(re)) {
+    const threshold = m[1] ? Number(m[1]) : 100 - Number(m[2]);
+    const about = `${m[3] ?? ''} ${m[4] ?? ''}`.toLowerCase();
+    out.push({ threshold, about, source: quoteAround(flat, m.index) });
+  }
+  return out;
+}
+
+const LETTERS = ['A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D+', 'D', 'D-'];
+
+/** A grading scale printed in the syllabus ("A 93–100", "92.5–100% A", "A: 90+"). */
+export function findScale(lines) {
+  const found = new Map();
+  let source = null;
+  const forward = /(?<![A-Za-z0-9+-])([A-D][+-]?)\s*[:=]?\s*\(?(\d{2}(?:\.\d+)?)\s*%?\s*(?:[-–—]\s*\d{2,3}(?:\.\d+)?\s*%?|\+|and above|or (?:higher|above|more))/g;
+  const backward = /(\d{2}(?:\.\d+)?)\s*%?\s*[-–—]\s*\d{2,3}(?:\.\d+)?\s*%?\s*[:=]?\s*([A-D][+-]?)(?=\s|$|[|,;)])/g;
+  for (const raw of lines) {
+    const line = clean(raw);
+    for (const m of line.matchAll(forward)) {
+      if (!found.has(m[1])) found.set(m[1], Number(m[2]));
+      source ??= line;
+    }
+    for (const m of line.matchAll(backward)) {
+      if (!found.has(m[2])) found.set(m[2], Number(m[1]));
+      source ??= line;
+    }
+  }
+  const letters = LETTERS.filter((l) => found.has(l));
+  if (!letters.includes('A') || letters.length < 4) return null;
+  const mins = letters.map((l) => found.get(l));
+  if (mins.some((v, i) => v < 50 || v > 100 || (i > 0 && v >= mins[i - 1]))) return null;
+  return { scale: [...letters.map((l) => [l, found.get(l)]), ['F', 0]], source };
 }
 
 // ---------- all together ----------
@@ -310,27 +418,43 @@ export function findDrops(text) {
  */
 export function parseSyllabus(text, { ref }) {
   const lines = text.split(/\r?\n/);
-  const { code, name } = findCode(lines.map(clean).filter(Boolean));
-  const meeting = findMeeting(lines.map(clean));
+  const cleaned = lines.map(clean);
+  const { code, name } = findCode(cleaned.filter(Boolean));
+  const meeting = findMeeting(cleaned);
   const drops = findDrops(text.replace(/\s+/g, ' '));
+  const fullCredit = findFullCredit(text);
+  const { rules, sources } = findRules(text);
+  const scale = findScale(lines);
+  if (scale) sources.scale = scale.source;
+  if (meeting) sources.meetings = meeting.source;
+
   const categories = findWeights(lines, ref).map((c) => {
     const kind = kindFor(c.label);
-    const drop = drops.find((d) => d.kind === kind || c.label.toLowerCase().includes(d.what.replace(/s$/, '')));
+    const lower = c.label.toLowerCase();
+    const drop = drops.find((d) => d.kind === kind || lower.includes(d.what.replace(/s$/, '')));
+    const full = fullCredit.find((f) => lower.split(/[^a-z]+/).some((w) => w.length > 3 && f.about.includes(w))
+      || (kind === 'participation' && /participation|attendance/.test(f.about)));
     return {
       name: c.label,
       weight: c.value,
       count: c.count,
       dropLowest: drop?.n ?? 0,
+      fullCreditAt: full?.threshold,
       kind,
       date: c.date,
       time: c.time,
+      check: c.guessedLabel || undefined,
+      source: { weight: clean(lines[c.index]), dropLowest: drop?.source, fullCreditAt: full?.source },
     };
   });
   return {
     code,
     name,
-    meetings: meeting ? [meeting] : [],
+    meetings: meeting ? [{ days: meeting.days, start: meeting.start, end: meeting.end }] : [],
     categories,
     items: findExams(lines, ref),
+    rules,
+    sources,
+    scale: scale?.scale,
   };
 }
