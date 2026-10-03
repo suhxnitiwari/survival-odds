@@ -1,6 +1,12 @@
 # Survival Odds ✦
 
-**Upload your syllabi. I'll tell you what you need on the final.**
+*Upload your syllabi. I'll tell you what you need on the final.*
+
+[![CI](https://github.com/suhxnitiwari/survival-odds/actions/workflows/ci.yml/badge.svg)](https://github.com/suhxnitiwari/survival-odds/actions/workflows/ci.yml)
+
+**Live:** https://suhxnitiwari.github.io/survival-odds/ (open [`?example`](https://suhxnitiwari.github.io/survival-odds/?example) for a made-up semester)
+
+## What it is
 
 Survival Odds reads your syllabi, pulls out the grade weights, class times and exam dates, and then does the three things I actually want during a semester:
 
@@ -16,16 +22,20 @@ It runs entirely in your browser. No accounts, no server, and nobody else sees y
 | --- | --- |
 | ![Study plan](docs/plan.png) | ![Semester Wrapped](docs/wrapped.png) |
 
-## Reading a syllabus
+## How it's built
+
+The interesting parts are a rule-based syllabus parser, weighted grade math that stays honest about what it doesn't know yet, a cost-based study scheduler, and standards-correct calendar export. All of it is plain JavaScript modules with 40 `node:test` tests, and CI runs them before every GitHub Pages deploy, so a failing test blocks the release.
+
+### Reading a syllabus
 
 Drop in one or more PDFs, or paste the text. Pick who reads it:
 
 - **Built-in reader** (default): free and private. The PDF is opened in your browser with pdf.js and nothing is uploaded.
-- **Gemini** (optional): better with messy syllabi. It's free with your own [Google AI Studio](https://aistudio.google.com/apikey) key, but the syllabus text is sent to Google. The key stays in your browser.
+- **Gemini** (optional): better with messy syllabi. It's called with a strict JSON response schema at temperature 0. It's free with your own [Google AI Studio](https://aistudio.google.com/apikey) key, but the syllabus text is sent to Google. The key stays in your browser.
 
 Either way, you see a review card before anything is saved: the weights and their total, class times, dated exams, and a warning for anything that looks off. Gemini's answer goes through the same checks as the built-in reader, so a model mistake shows up as a warning instead of quietly ending up in your grades.
 
-### How the built-in reader works
+#### How the built-in reader works
 
 Syllabi don't share a format, so [`js/parser.js`](js/parser.js) looks for the *shape* each piece of information usually takes:
 
@@ -41,7 +51,7 @@ Syllabi don't share a format, so [`js/parser.js`](js/parser.js) looks for the *s
 
 While building it I tested it against real syllabi from 7 different courses, with very different layouts. It found weights adding to exactly 100% in all 7. The tests use made-up syllabi written in those same layouts.
 
-## The grade math
+### The grade math
 
 Each category's weight is split across its items by points, so a 100-point exam counts twice as much as a 50-point one in the same category ([`js/grades.js`](js/grades.js)).
 
@@ -50,7 +60,7 @@ Each category's weight is split across its items by points, so a 100-point exam 
 - **Drop the lowest** only kicks in once a category is fully graded. Until then it doesn't guess which one you'll drop, so the numbers stay honest.
 - **Weights that don't add to 100** are scaled so they do, and the review screen warns you.
 
-## The study planner
+### The study planner
 
 Every open half-hour in the days before an exam gets a cost, and the cheapest slot wins, the same approach as [Saturday in Austin](https://github.com/suhxnitiwari/saturday-in-austin). The rules live as data in [`js/planner.js`](js/planner.js):
 
@@ -65,7 +75,19 @@ Exams are planned soonest first, since they have the fewest days to work with. I
 
 Study blocks and deadlines export as `.ics` files (RFC 5545: escaped text, CRLF line endings, lines folded at 75 bytes without splitting a character).
 
-## Run it
+## Design choices
+
+- **Private by default.** No accounts and no server. Everything is saved in localStorage, wrapped so a browser that blocks storage never breaks the app, and your syllabi and grades only leave your device if you choose the optional Gemini reader.
+- **Review before save.** Nothing a reader extracts goes into your grades until you've seen it, with warnings on anything suspicious.
+- **A voice that sounds like a friend in your class,** not a learning-management system: "You need a 71 for an A. You're fine."
+- **Semester Wrapped** borrows the year-in-review format and draws a 1080×1920 story card on a canvas, ready to post.
+- Fraunces and Inter type, with light and dark mode.
+
+## Tech stack
+
+HTML, CSS, vanilla JavaScript (ES modules), pdf.js, Canvas API, optional Gemini API, node:test, GitHub Actions + GitHub Pages.
+
+## Run it locally
 
 It's plain HTML, CSS and JavaScript modules. There's no build step.
 
@@ -97,4 +119,4 @@ js/
 test/           node:test suites and a made-up syllabus fixture
 ```
 
-Built by Suhani Tiwari, MIS at McCombs, UT Austin.
+Built by [Suhani Tiwari](https://suhanitiwari.com).
