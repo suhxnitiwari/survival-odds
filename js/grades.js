@@ -202,12 +202,16 @@ export function pickFinal(course) {
 /**
  * The score you need on one item to finish at `target`, assuming everything
  * else still ungraded goes the way that category has gone so far (or your
- * overall average, or your target if nothing is graded yet).
+ * overall average, or your target if nothing is graded yet). Pass `assume`
+ * (0–100) to say what the rest averages instead: the what-if slider.
  */
-export function neededOnItem(course, itemId, target) {
+export function neededOnItem(course, itemId, target, assume = null) {
   if ((itemWeights(course).get(itemId)?.weight ?? 0) < 1e-9) return null;
   const s = summarize(course);
   const base = projected(course, s.current !== null ? s.current / 100 : target / 100);
+  if (assume !== null) {
+    for (const item of course.items) if (!isGraded(item)) base.set(item.id, assume / 100);
+  }
   return smallestScore((x) => {
     const values = new Map(base);
     values.set(itemId, x / 100);
@@ -216,7 +220,7 @@ export function neededOnItem(course, itemId, target) {
 }
 
 /** "What do I need on the final?" for every letter on the scale. */
-export function finalTable(course) {
+export function finalTable(course, assume = null) {
   const final = pickFinal(course);
   const scale = course.scale ?? DEFAULT_SCALE;
   return scale
@@ -224,7 +228,7 @@ export function finalTable(course) {
     .map(([letter, cutoff]) => ({
       letter,
       cutoff,
-      needed: final ? neededOnItem(course, final.id, cutoff) : neededOnRemaining(course, cutoff),
+      needed: final ? neededOnItem(course, final.id, cutoff, assume) : neededOnRemaining(course, cutoff),
     }));
 }
 
@@ -255,6 +259,18 @@ function article(letter) {
 export function formatScore(n) {
   if (n > 150) return '150+';
   return Number.isInteger(Math.round(n * 10) / 10) ? String(Math.round(n)) : n.toFixed(1);
+}
+
+/** How the score you need feels: the bands on the survival gauge. */
+export const ODDS = [
+  { max: 65, key: 'chill', label: 'Chill' },
+  { max: 85, key: 'doable', label: 'Doable' },
+  { max: 100, key: 'clutch', label: 'Clutch' },
+  { max: Infinity, key: 'out', label: 'Out of reach' },
+];
+
+export function oddsFor(needed) {
+  return ODDS.find((b) => needed <= b.max);
 }
 
 /** The one-liner under the big number. */

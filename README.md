@@ -92,7 +92,7 @@ It's plain HTML, CSS and JavaScript modules. There's no build step.
 
 ```bash
 python3 -m http.server 8000     # then open http://localhost:8000
-npm test                        # 52 tests, Node 22+
+npm test                        # 53 tests, Node 22+
 ```
 
 Open `?example` to see a made-up semester without touching your saved data.

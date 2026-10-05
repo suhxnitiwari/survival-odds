@@ -8,6 +8,7 @@
   --accent: #d6336c;
   --accent-ink: #ffffff;
   --good: #2f9e44;
+  --doable: #e0a800;
   --tight: #e8590c;
   --nope: #c92a2a;
   --shadow: 0 1px 2px rgba(42, 26, 46, 0.05), 0 8px 24px rgba(42, 26, 46, 0.06);
@@ -28,6 +29,7 @@
     --accent: #f06595;
     --accent-ink: #1a0f1c;
     --good: #69db7c;
+    --doable: #ffd43b;
     --tight: #ffa94d;
     --nope: #ff8787;
     --shadow: none;
@@ -130,9 +132,42 @@ label.block { margin: 1rem 0; }
 .final-controls label { display: flex; align-items: center; gap: 0.35rem; }
 .final-controls select { width: auto; padding: 0.3rem 0.5rem; }
 .big { font: 900 4.2rem/1 var(--display); margin: 0.8rem 0 0.4rem; letter-spacing: -0.03em; color: var(--c); }
-.big.safe, .big.good { color: var(--good); }
-.big.tight { color: var(--tight); }
-.big.nope { color: var(--nope); }
+.big.chill { color: var(--good); }
+.big.doable { color: var(--doable); }
+.big.clutch { color: var(--tight); }
+.big.out { color: var(--nope); }
+
+/* survival gauge: 0–100 on the final, in the ODDS bands */
+.gauge { margin: 1rem auto 0; max-width: 320px; }
+.gauge-track { position: relative; display: flex; gap: 3px; height: 8px; }
+.band { border-radius: 99px; }
+.band-chill { background: color-mix(in srgb, var(--good) 45%, var(--surface)); }
+.band-doable { background: color-mix(in srgb, var(--doable) 55%, var(--surface)); }
+.band-clutch { background: color-mix(in srgb, var(--tight) 50%, var(--surface)); }
+.gauge-mark {
+  position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%;
+  background: var(--surface); border: 4px solid var(--ink); transition: left 0.15s ease-out;
+}
+.gauge-mark.mark-chill { border-color: var(--good); }
+.gauge-mark.mark-doable { border-color: color-mix(in srgb, var(--doable) 80%, var(--ink)); }
+.gauge-mark.mark-clutch { border-color: var(--tight); }
+.gauge-mark.mark-out { border-color: var(--nope); background: var(--nope); }
+.gauge-zones { display: flex; gap: 3px; margin-top: 0.45rem; font-size: 0.72rem; color: var(--muted); }
+.gauge-zones span { text-align: center; white-space: nowrap; }
+.gauge-zones span[class] { font-weight: 700; }
+.gauge-label { margin: 0.4rem 0 0; font-size: 0.82rem; font-weight: 600; }
+.odds-chill { color: var(--good); }
+.odds-doable { color: color-mix(in srgb, var(--doable) 70%, var(--ink)); }
+.odds-clutch { color: var(--tight); }
+.odds-out { color: var(--nope); }
+@media (prefers-reduced-motion: reduce) { .gauge-mark { transition: none; } }
+
+/* what-if slider */
+.what-if { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px dashed var(--line); text-align: left; }
+.what-if-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.what-if-head label { display: block; color: var(--ink); font-size: 0.88rem; }
+.what-if-head b { font: 700 1.15rem var(--display); color: var(--accent); font-variant-numeric: tabular-nums; }
+.what-if input[type="range"] { padding: 0; border: 0; background: none; accent-color: var(--accent); margin-top: 0.4rem; }
 .verdict { font-weight: 600; margin: 0; }
 details summary { cursor: pointer; font-weight: 600; margin-top: 0.9rem; color: var(--accent); }
 .ladder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 0.4rem; margin-top: 0.6rem; }
@@ -217,10 +252,15 @@ table.items td:nth-child(6) input, table.items td:nth-child(7) input { width: 5r
 /* ---------- syllabus upload ---------- */
 .linkish { background: none; border: 0; color: var(--muted); text-decoration: underline; padding: 0; }
 .drop {
-  display: grid; place-items: center; margin-top: 1rem; padding: 1.6rem 1rem; border: 2px dashed var(--line);
+  display: grid; place-items: center; margin-top: 1rem; padding: 1.6rem 1rem; border: 2px dashed color-mix(in srgb, var(--accent) 35%, var(--line));
   border-radius: 14px; background: var(--surface-2); color: var(--ink); font-size: 1rem; text-align: center; cursor: pointer;
 }
 .drop b { color: var(--accent); }
+.drop-main { display: block; }
+.drop-meta { display: block; font-size: 0.8rem; color: var(--muted); margin-top: 0.3rem; }
+.hero-drop { padding: 2.6rem 1rem; margin-top: 1.75rem; font-size: 1.1rem; background: var(--surface); }
+.privacy { font-size: 0.82rem; color: var(--muted) !important; margin: 0.6rem 0 0; }
+.privacy b { color: var(--ink); }
 .drop.over, .drop:hover { border-color: var(--accent); }
 .drop input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .drop:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }

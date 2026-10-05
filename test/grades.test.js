@@ -117,3 +117,16 @@ test('a fully graded course needs nothing', () => {
   assert.equal(neededOnRemaining(c, 93), null);
   close(summarize(c).current, 86);
 });
+
+test('what-if: assuming a different average on the rest changes what the final needs', () => {
+  // 40% homework (h1 graded 90%, h2 open), 60% final (open).
+  const c = course();
+  c.items[1].earned = null;
+  const onPace = neededOnItem(c, 'f', 90); // h2 projected at 90%
+  const worse = neededOnItem(c, 'f', 90, 50); // h2 at 50%
+  const perfect = neededOnItem(c, 'f', 90, 100);
+  close(onPace, 90, 1e-6);
+  close(worse, (90 - 18 - 10) / 0.6, 1e-6);
+  close(perfect, (90 - 18 - 20) / 0.6, 1e-6);
+  assert.equal(finalTable(c, 100).find((r) => r.letter === 'A-').needed, perfect);
+});

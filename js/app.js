@@ -1,6 +1,6 @@
 import { WEEKDAYS, addDays, formatTime, parseTime, prettyDate, shortDate, todayLocal, toTimeInput } from './dates.js';
 import {
-  DEFAULT_SCALE, describeRules, examAverage, finalTable, formatScore, isGraded, itemWeights, pickFinal, summarize, verdict,
+  DEFAULT_SCALE, ODDS, describeRules, examAverage, finalTable, formatScore, isGraded, itemWeights, oddsFor, pickFinal, summarize, verdict,
 } from './grades.js';
 import { DEFAULT_PREFS, RULES, planStudy, upcomingExams } from './planner.js';
 import { buildCalendar } from './ics.js';
@@ -87,12 +87,24 @@ function emptyState() {
       <p class="hero-kicker">✦ for the week-before-finals version of you</p>
       <h2>What do I need on the final?</h2>
       <p>Upload your syllabi and I'll pull out the grade weights, class times and exam dates. Then enter grades as they come back, and I'll tell you exactly what you need, plan your studying around your schedule, and wrap up the whole semester in one card.</p>
+      ${dropzone('hero-drop')}
       <div class="hero-actions">
-        <button class="primary" data-action="upload">Upload my syllabi ✦</button>
-        <button class="ghost" data-action="sample">See a made-up example</button>
+        <button class="ghost" data-action="sample">Try it with a made-up semester</button>
+        <button class="ghost" data-action="start">Enter grade weights myself</button>
       </div>
-      <p class="tiny"><button class="linkish" data-action="start">or type a class in yourself</button></p>
     </section>`;
+}
+
+/** The upload box: drop or click, what it takes, and where the file goes. */
+function dropzone(extra = '') {
+  return `<label class="drop ${extra}" data-role="drop">
+      <input type="file" accept="application/pdf,.pdf,.txt,text/plain" multiple data-role="syllabus-file">
+      <span class="drop-main"><b>Drop your syllabus PDFs here</b> or click to choose</span>
+      <span class="drop-meta">PDF or .txt, as many as you have · or paste the text</span>
+    </label>
+    <p class="privacy">${reader.mode === 'gemini'
+      ? '<b>Gemini is on:</b> the syllabus text goes to Google to be read. Your grades still stay here.'
+      : '<b>Private:</b> read right here in your browser. Nothing is uploaded, no account.'}</p>`;
 }
 
 // ---------- sources ----------
@@ -127,23 +139,13 @@ function gradeCard(course) {
   const s = summarize(course);
   const scale = course.scale ?? DEFAULT_SCALE;
   const target = course.target ?? 'A';
-  const table = finalTable(course);
+  const table = finalTable(course, course.whatIf ?? null);
   const row = table.find((r) => r.letter === target) ?? table[0];
-  const best = table.find((r) => r.needed !== null && r.needed <= 100);
   const final = pickFinal(course);
   const open = course.items.filter((i) => !isGraded(i));
   const weights = itemWeights(course);
-
-  let big;
-  if (row.needed === null) {
-    big = `<div class="big">${s.current === null ? '—' : formatScore(s.current)}</div>
-           <p class="verdict">${verdict(null)}</p>`;
-  } else {
-    const n = Math.ceil(row.needed * 10) / 10;
-    const mood = n <= 0 ? 'safe' : n <= 80 ? 'good' : n <= 100 ? 'tight' : 'nope';
-    big = `<div class="big ${mood}">${n <= 0 ? '✓' : formatScore(n)}</div>
-           <p class="verdict">${esc(verdict(row.needed, target, best && best.letter !== target ? best.letter : null))}</p>`;
-  }
+  // The what-if slider only matters when something besides the final is still ungraded.
+  const others = final ? open.filter((i) => i.id !== final.id && (weights.get(i.id)?.weight ?? 0) > 0) : [];
 
   return `
   <article class="card" style="--c:${course.color}">
@@ -175,8 +177,8 @@ function gradeCard(course) {
             ${open.map((i) => `<option value="${i.id}" ${final?.id === i.id ? 'selected' : ''}>${esc(i.name)} (${Math.round((weights.get(i.id)?.weight ?? 0) * 100)}%)</option>`).join('')}
           </select></label>` : ''}
       </div>
-      ${big}
-      ${final && row.needed !== null ? `<p class="tiny muted">Assumes the rest of your ungraded work goes the way that category has gone so far.</p>` : ''}
+      <div data-result="${course.id}">${finalResult(course, table)}</div>
+      ${others.length && row.needed !== null ? whatIf(course, ci, others) : ''}
     </div>
 
     ${passWarning(course)}
@@ -208,6 +210,59 @@ function gradeCard(course) {
       </ul>
     </details>` : ''}
   </article>`;
+}
+
+/** The big number, its one-liner, and the survival gauge. Patched live while the what-if slider moves. */
+function finalResult(course, table = finalTable(course, course.whatIf ?? null)) {
+  const s = summarize(course);
+  const target = course.target ?? 'A';
+  const row = table.find((r) => r.letter === target) ?? table[0];
+  const best = table.find((r) => r.needed !== null && r.needed <= 100);
+  if (row.needed === null) {
+    return `<div class="big">${s.current === null ? '—' : formatScore(s.current)}</div>
+      <p class="verdict">${verdict(null)}</p>`;
+  }
+  const n = Math.ceil(row.needed * 10) / 10;
+  const odds = oddsFor(n);
+  return `<div class="big ${n <= 0 ? 'chill' : odds.key}">${n <= 0 ? '✓' : formatScore(n)}</div>
+    <p class="verdict">${esc(verdict(row.needed, target, best && best.letter !== target ? best.letter : null))}</p>
+    ${gauge(n)}`;
+}
+
+/** 0–100 on the final, split into the ODDS bands, with a marker at what you need. */
+function gauge(n) {
+  const at = Math.max(0, Math.min(100, n));
+  const odds = n <= 0 ? ODDS[0] : oddsFor(n);
+  let from = 0;
+  const zones = ODDS.filter((b) => b.max <= 100).map((b) => {
+    const z = { ...b, flex: b.max - from };
+    from = b.max;
+    return z;
+  });
+  return `<div class="gauge" role="img" aria-label="Survival odds: ${odds.label}">
+      <div class="gauge-track">${zones.map((z) => `<span class="band band-${z.key}" style="flex:${z.flex}"></span>`).join('')}
+        <b class="gauge-mark mark-${odds.key}" style="left:${n > 100 ? 100 : at}%"></b></div>
+      <div class="gauge-zones">${zones.map((z) => `<span class="${z.key === odds.key ? `odds-${z.key}` : ''}" style="flex:${z.flex}">${z.label}</span>`).join('')}</div>
+      ${n > 100 ? '<p class="gauge-label odds-out">Out of reach, even with a 100</p>' : ''}
+    </div>`;
+}
+
+/** "What if the rest of my work goes like this?" Changes the assumption behind the number. */
+function whatIf(course, ci, others) {
+  const on = course.whatIf !== undefined && course.whatIf !== null;
+  const pace = Math.round(summarize(course).current ?? 85);
+  const value = on ? course.whatIf : pace;
+  const names = others.length === 1 ? esc(others[0].name) : `the other ${others.length} things left`;
+  return `<div class="what-if">
+      <div class="what-if-head">
+        <label for="wi-${course.id}">What if ${names} average</label>
+        <b data-wi="${course.id}">${value}%</b>
+      </div>
+      <input id="wi-${course.id}" type="range" min="0" max="100" step="1" value="${value}" data-path="courses.${ci}.whatIf" data-type="number" data-course-id="${course.id}">
+      <p class="tiny muted">${on
+        ? `<button class="linkish" data-action="clear-whatif" data-course="${ci}">Back to your pace</button>`
+        : 'Your pace so far. Drag to try another.'}</p>
+    </div>`;
 }
 
 // ---------- Study plan ----------
@@ -484,10 +539,7 @@ function renderImporter() {
   <section class="card importer" id="importer">
     <h2>Upload a syllabus ✦</h2>
     <p class="muted">Drop in your syllabi. I'll find the class times, the grade weights and the exam dates, and you check everything before it's added.</p>
-    <label class="drop" data-role="drop">
-      <input type="file" accept="application/pdf,.pdf,.txt,text/plain" multiple data-role="syllabus-file">
-      <span><b>Choose PDFs</b> or drop them here</span>
-    </label>
+    ${dropzone()}
     <details data-key="paste">
       <summary>Or paste the text</summary>
       <textarea rows="6" data-role="paste" placeholder="Paste the grading section, the schedule, or the whole thing">${esc(pasteText)}</textarea>
@@ -582,6 +634,10 @@ async function readSyllabus(fileName, getText, via = reader.mode, existing = nul
 }
 
 function readFiles(files) {
+  if (files.length && tab !== 'classes') {
+    tab = 'classes';
+    history.replaceState(null, '', '#classes');
+  }
   for (const file of files) {
     const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
     readSyllabus(file.name, () => (isPdf ? pdfText(file) : file.text()));
@@ -605,6 +661,14 @@ app.addEventListener('change', (e) => {
 
 app.addEventListener('input', (e) => {
   if (e.target.dataset?.role === 'paste') pasteText = e.target.value;
+  // What-if slider: update the number while dragging, save and re-render on release.
+  const id = e.target.dataset?.courseId;
+  if (e.target.type === 'range' && id) {
+    const course = courseById(id);
+    course.whatIf = Number(e.target.value);
+    app.querySelector(`[data-result="${id}"]`).innerHTML = finalResult(course);
+    app.querySelector(`[data-wi="${id}"]`).textContent = `${course.whatIf}%`;
+  }
 });
 
 app.addEventListener('dragover', (e) => {
@@ -705,11 +769,6 @@ document.addEventListener('click', (e) => {
       tab = 'classes';
       actions['add-course']();
     },
-    upload() {
-      tab = 'classes';
-      history.replaceState(null, '', '#classes');
-      requestAnimationFrame(() => document.querySelector('[data-role="syllabus-file"]')?.click());
-    },
     'read-paste'() {
       if (!pasteText.trim()) return;
       const text = pasteText;
@@ -722,6 +781,7 @@ document.addEventListener('click', (e) => {
       imports = imports.filter((i) => i !== entry);
     },
     'reset-scale'() { delete course.scale; },
+    'clear-whatif'() { delete course.whatIf; },
     'discard-import'() { imports = imports.filter((i) => i.id !== btn.dataset.id); },
     'retry-import'() {
       const entry = imports.find((i) => i.id === btn.dataset.id);
