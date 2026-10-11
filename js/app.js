@@ -13,7 +13,9 @@ import { parseSyllabus } from './parser.js';
 import { toCourse } from './importer.js';
 import { DEFAULT_MODEL, readWithGemini } from './ai.js';
 import { pdfText } from './pdf.js';
-import { POINTS, adjustedPrior, cumulativeGpa, formatGpa, passes, pointsFor, semesterGpa } from './gpa.js';
+import {
+  NO_GPA, POINTS, adjustedPrior, combineGpa, cumulativeGpa, formatGpa, passes, pointsFor, semesterGpa, transcriptGpa,
+} from './gpa.js';
 
 const PALETTE = ['#d6336c', '#7048e8', '#0c8599', '#e8590c', '#2f9e44', '#1971c2', '#ae3ec9', '#f08c00'];
 const KINDS = ['exam', 'quiz', 'homework', 'project', 'paper', 'participation'];
@@ -50,7 +52,7 @@ function render() {
   document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-current', b.dataset.tab === tab ? 'page' : 'false'));
   renderTopActions();
 
-  if (!state.courses.length && tab !== 'classes') {
+  if (!state.courses.length && tab !== 'classes' && tab !== 'gpa') {
     app.innerHTML = emptyState();
   } else {
     app.innerHTML = { grades: renderGrades, gpa: renderGpa, plan: renderPlan, wrapped: renderWrapped, classes: renderClasses }[tab]();
@@ -419,8 +421,17 @@ function renderGpa() {
   const opts = { aPlus: g.aPlus ? 4.33 : 4 };
   const rows = state.courses.map(gpaRow);
   const sem = semesterGpa(rows, opts);
-  const before = adjustedPrior({ gpa: g.prior, hours: g.priorHours }, [], opts);
-  const prior = adjustedPrior({ gpa: g.prior, hours: g.priorHours }, pastChanges(g), opts);
+  const mode = g.mode ?? (state.transcript?.length ? 'transcript' : 'quick');
+  const base = { gpa: g.prior, hours: g.priorHours };
+  let prior;
+  let before = null;
+  if (mode === 'transcript') {
+    const t = transcriptGpa(transcriptRows(), opts);
+    prior = combineGpa(t.hours ? t : null, adjustedPrior(base, [], opts));
+  } else {
+    before = adjustedPrior(base, [], opts);
+    prior = adjustedPrior(base, pastChanges(g), opts);
+  }
   const overall = prior ? cumulativeGpa(sem, prior) : null;
   const overallBefore = before ? cumulativeGpa(sem, before) : null;
   const without = (row) => semesterGpa(rows.map((r) => (r === row ? { ...r, dropped: true } : r)), opts);
@@ -445,18 +456,14 @@ function renderGpa() {
         <span>Overall</span>
         <b>${prior ? formatGpa(overall) : '—'}</b>
         <small class="muted">${prior
-          ? `${prior.hours + sem.hours} hours in your GPA${past.length && overallBefore !== null ? ` · ${delta(overall, overallBefore)} from past-class changes` : ''}`
-          : 'Add your GPA so far below'}</small>
+          ? `${prior.hours + sem.hours} hours in your GPA${mode === 'quick' && past.length && overallBefore !== null ? ` · ${delta(overall, overallBefore)} from past-class changes` : ''}`
+          : 'Add what came before, below'}</small>
       </div>
-      <div class="grid2 gpa-prior">
-        <label>GPA so far <input type="number" inputmode="decimal" min="0" max="4.33" step="0.01" value="${g.prior ?? ''}" placeholder="3.50" data-path="gpa.prior" data-type="optnumber"></label>
-        <label>Hours in it so far <input type="number" inputmode="numeric" min="0" step="1" value="${g.priorHours ?? ''}" placeholder="45" data-path="gpa.priorHours" data-type="optnumber"></label>
-      </div>
-      <p class="tiny muted">From your transcript, before this semester. Count only hours that are in your GPA (not pass/fail or transfer credit).</p>
     </section>
 
     <section class="card">
       <h2>This semester</h2>
+      ${rows.length ? '' : '<p class="muted">No classes this semester yet. Add them in My classes and they show up here.</p>'}
       <p class="muted">Each class counts at the grade it's headed for (your sliders on The final). Pick a letter to try another, mark a class pass/fail, or drop one to see what it does.</p>
       <div class="gpa-table">
         <div class="gpa-tr gpa-th"><span>Class</span><span>Hours</span><span>Grade</span><span>Without it</span><span>Drop</span></div>
@@ -493,24 +500,133 @@ function renderGpa() {
     </section>
 
     <section class="card">
-      <h2>Past classes</h2>
-      <p class="muted">An old grade turning into a P, or a class you're retaking. Schools handle retakes differently (some replace the old grade, some count both), so pick what yours does.</p>
-      ${!prior && past.length ? '<p class="warn">Add your GPA and hours so far above, so there\'s something to change.</p>' : ''}
-      ${past.map((c, pi) => `<div class="past-row">
-        <label>Class <input value="${esc(c.name)}" placeholder="Class name" data-path="gpa.past.${pi}.name"></label>
-        <label>Hours <input type="number" inputmode="numeric" min="0" max="6" step="1" value="${c.hours}" data-path="gpa.past.${pi}.hours" data-type="number"></label>
-        <label>Old grade <select data-path="gpa.past.${pi}.letter">${LETTERS.map((l) => `<option ${l === c.letter ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
-        <label class="past-change">What changes <select data-path="gpa.past.${pi}.change">${Object.entries(PAST_CHANGES).map(([k, t]) => `<option value="${k}" ${k === c.change ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-        ${c.change !== 'pass' ? `<label class="past-new">New grade <select data-path="gpa.past.${pi}.newGrade">
-          <option value="">Pick one</option>
-          ${state.courses.map((course) => `<option value="course:${course.id}" ${c.newGrade === `course:${course.id}` ? 'selected' : ''}>Retaking it now as ${esc(course.code)}</option>`).join('')}
-          ${LETTERS.map((l) => `<option value="${l}" ${c.newGrade === l ? 'selected' : ''}>${l}</option>`).join('')}
-        </select></label>` : '<p class="past-new tiny muted">Comes out of your GPA: no hours, no points.</p>'}
-        <button class="x" data-action="del-past" data-index="${pi}" aria-label="Remove">×</button>
-      </div>`).join('')}
-      <button class="ghost small" data-action="add-past">+ Add a past class</button>
+      <div class="hist-head">
+        <h2>Before this semester</h2>
+        <div class="seg" role="group" aria-label="How to add what came before">
+          <button data-action="gpa-mode" data-mode="quick" aria-pressed="${mode === 'quick'}">Type my GPA</button>
+          <button data-action="gpa-mode" data-mode="transcript" aria-pressed="${mode === 'transcript'}">Keep my transcript</button>
+        </div>
+      </div>
+      ${mode === 'transcript' ? transcriptEditor(opts) : quickHistory(g, prior, past)}
     </section>
+
+    ${dataCard()}
   </div>`;
+}
+
+function quickHistory(g, prior, past) {
+  return `
+    <div class="grid2 gpa-prior">
+      <label>GPA so far <input type="number" inputmode="decimal" min="0" max="4.33" step="0.01" value="${g.prior ?? ''}" placeholder="3.50" data-path="gpa.prior" data-type="optnumber"></label>
+      <label>Hours in it so far <input type="number" inputmode="numeric" min="0" step="1" value="${g.priorHours ?? ''}" placeholder="45" data-path="gpa.priorHours" data-type="optnumber"></label>
+    </div>
+    <p class="tiny muted">From your transcript. Count only hours that are in your GPA (not pass/fail or transfer credit).</p>
+    <h3>Changes to past classes</h3>
+    <p class="muted">An old grade turning into a P, or a class you're retaking. Schools handle retakes differently (some replace the old grade, some count both), so pick what yours does.</p>
+    ${!prior && past.length ? '<p class="warn">Add your GPA and hours so far above, so there\'s something to change.</p>' : ''}
+    ${past.map((c, pi) => `<div class="past-row">
+      <label>Class <input value="${esc(c.name)}" placeholder="Class name" data-path="gpa.past.${pi}.name"></label>
+      <label>Hours <input type="number" inputmode="numeric" min="0" max="6" step="1" value="${c.hours}" data-path="gpa.past.${pi}.hours" data-type="number"></label>
+      <label>Old grade <select data-path="gpa.past.${pi}.letter">${LETTERS.map((l) => `<option ${l === c.letter ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label class="past-change">What changes <select data-path="gpa.past.${pi}.change">${Object.entries(PAST_CHANGES).map(([k, t]) => `<option value="${k}" ${k === c.change ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+      ${c.change !== 'pass' ? `<label class="past-new">New grade <select data-path="gpa.past.${pi}.newGrade">
+        <option value="">Pick one</option>
+        ${state.courses.map((course) => `<option value="course:${course.id}" ${c.newGrade === `course:${course.id}` ? 'selected' : ''}>Retaking it now as ${esc(course.code)}</option>`).join('')}
+        ${LETTERS.map((l) => `<option value="${l}" ${c.newGrade === l ? 'selected' : ''}>${l}</option>`).join('')}
+      </select></label>` : '<p class="past-new tiny muted">Comes out of your GPA: no hours, no points.</p>'}
+      <button class="x" data-action="del-past" data-index="${pi}" aria-label="Remove">×</button>
+    </div>`).join('')}
+    <button class="ghost small" data-action="add-past">+ Add a past class</button>`;
+}
+
+// ---------- transcript ----------
+//
+// state.transcript = [{ id, term, classes: [{ id, code, hours, letter }] }].
+// Change a grade and every GPA on the page updates. P, W and "retaken" keep
+// the class on your record without counting.
+
+function transcriptRows() {
+  return (state.transcript ?? []).flatMap((t) => t.classes);
+}
+
+function gradeOptions(selected) {
+  return `<option value="" ${selected ? '' : 'selected'}>—</option>
+    ${LETTERS.map((l) => `<option ${l === selected ? 'selected' : ''}>${l}</option>`).join('')}
+    ${Object.entries(NO_GPA).map(([k, label]) => `<option value="${k}" ${k === selected ? 'selected' : ''}>${label}</option>`).join('')}`;
+}
+
+function transcriptEditor(opts) {
+  const terms = state.transcript ?? [];
+  const all = transcriptGpa(transcriptRows(), opts);
+  const g = state.gpa ?? {};
+  return `
+    <p class="muted">Your past semesters, class by class. Change any grade and your GPA updates. Mark a class you retook as <b>Retaken</b> so only the new grade counts, or <b>P</b> if it turned into a pass.</p>
+    ${terms.length ? `<p class="transcript-total">Transcript GPA <b>${formatGpa(all.gpa)}</b> <small class="muted">over ${all.hours} hours</small></p>` : ''}
+    <div class="terms">
+    ${terms.map((t, ti) => {
+      const tg = transcriptGpa(t.classes, opts);
+      return `<div class="term">
+        <div class="term-head">
+          <input class="term-name" value="${esc(t.term)}" placeholder="Fall 2025" data-path="transcript.${ti}.term" aria-label="Semester">
+          <span class="term-gpa">${formatGpa(tg.gpa)} <small class="muted">${tg.hours} hrs</small></span>
+          <button class="x" data-action="del-term" data-index="${ti}" aria-label="Remove semester">×</button>
+        </div>
+        ${t.classes.map((c, ki) => `<div class="term-row ${pointsFor(c.letter, opts) === null && c.letter ? 'is-off' : ''}">
+          <input value="${esc(c.code)}" placeholder="Class" data-path="transcript.${ti}.classes.${ki}.code" aria-label="Class">
+          <span class="unit"><input type="number" inputmode="numeric" min="0" max="6" step="1" value="${c.hours}" data-path="transcript.${ti}.classes.${ki}.hours" data-type="number" aria-label="Hours"><small>hrs</small></span>
+          <select data-path="transcript.${ti}.classes.${ki}.letter" aria-label="Grade">${gradeOptions(c.letter)}</select>
+          <button class="x" data-action="del" data-path="transcript.${ti}.classes.${ki}" aria-label="Remove class">×</button>
+        </div>`).join('')}
+        <button class="linkish tiny" data-action="add-tclass" data-index="${ti}">+ Add a class</button>
+      </div>`;
+    }).join('')}
+    </div>
+    <button class="ghost small" data-action="add-term">+ Add a semester</button>
+    <details class="fine-print" data-key="transcript-base" ${g.priorHours ? 'open' : ''}>
+      <summary>Earlier classes you don't want to type in</summary>
+      <div class="grid2 gpa-prior">
+        <label>Their GPA <input type="number" inputmode="decimal" min="0" max="4.33" step="0.01" value="${g.prior ?? ''}" placeholder="3.50" data-path="gpa.prior" data-type="optnumber"></label>
+        <label>Their hours <input type="number" inputmode="numeric" min="0" step="1" value="${g.priorHours ?? ''}" placeholder="30" data-path="gpa.priorHours" data-type="optnumber"></label>
+      </div>
+      <p class="tiny muted">Added to the transcript above. Leave empty if you typed everything in.</p>
+    </details>`;
+}
+
+// ---------- your data: backup and restore ----------
+
+function dataCard() {
+  return `<section class="card data-card">
+    <h3>Your data</h3>
+    <p class="muted">Everything saves in this browser on its own. Download a backup to keep it safe, or to move it to another laptop or browser.</p>
+    <div class="row-actions">
+      <button class="ghost small" data-action="backup">Download a backup</button>
+      <label class="ghost small file-btn">Load a backup<input type="file" accept=".json,application/json" data-role="restore"></label>
+    </div>
+  </section>`;
+}
+
+function backup() {
+  const data = { app: 'survival-odds', version: 1, savedAt: new Date().toISOString(), state };
+  download(`survival-odds-backup-${today}.json`, new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
+}
+
+async function restore(file) {
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    alert("That file isn't a Survival Odds backup.");
+    return;
+  }
+  if (data?.app !== 'survival-odds' || !Array.isArray(data.state?.courses)) {
+    alert("That file isn't a Survival Odds backup.");
+    return;
+  }
+  const when = data.savedAt ? new Date(data.savedAt).toLocaleDateString() : 'that backup';
+  if (!confirm(`Replace everything here with your backup from ${when}?`)) return;
+  state = { busy: [], prefs: {}, semester: null, ...data.state };
+  persist();
+  render();
 }
 
 // ---------- Study plan ----------
@@ -696,6 +812,7 @@ function renderClasses() {
     </section>
     ${state.courses.map(classCard).join('')}
     <button class="primary add-course" data-action="add-course">+ Add a class</button>
+    ${dataCard()}
   </div>`;
 }
 
@@ -1035,6 +1152,10 @@ app.addEventListener('change', (e) => {
   if (role === 'syllabus-file') {
     readFiles([...e.target.files]);
     e.target.value = '';
+  } else if (role === 'restore') {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (file) restore(file);
   } else if (role === 'reader-mode') {
     reader.mode = e.target.value;
     saveReader(reader);
@@ -1191,6 +1312,26 @@ document.addEventListener('click', (e) => {
       (state.gpa.past ??= []).push({ id: uid(), name: '', hours: 3, letter: 'F', change: 'pass', newGrade: '' });
     },
     'del-past'() { state.gpa.past.splice(Number(btn.dataset.index), 1); },
+    'gpa-mode'() {
+      state.gpa ??= {};
+      state.gpa.mode = btn.dataset.mode;
+      if (btn.dataset.mode === 'transcript' && !state.transcript?.length) actions['add-term']();
+    },
+    'add-term'() {
+      (state.transcript ??= []).push({
+        id: uid(), term: '',
+        classes: [1, 2, 3, 4].map(() => ({ id: uid(), code: '', hours: 3, letter: '' })),
+      });
+    },
+    'add-tclass'() {
+      state.transcript[Number(btn.dataset.index)].classes.push({ id: uid(), code: '', hours: 3, letter: '' });
+    },
+    'del-term'() {
+      const t = state.transcript[Number(btn.dataset.index)];
+      if (t.classes.some((c) => c.letter) && !confirm(`Remove ${t.term || 'this semester'} and its grades?`)) return;
+      state.transcript.splice(Number(btn.dataset.index), 1);
+    },
+    backup() { backup(); },
     'reset-play'() {
       delete course.whatIf;
       delete course.finalGuess;

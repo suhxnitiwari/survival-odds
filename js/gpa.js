@@ -79,3 +79,18 @@ export function passes(letter, passAt, letters) {
 export function formatGpa(g) {
   return g === null || g === undefined ? '—' : (Math.round(g * 100) / 100).toFixed(2);
 }
+
+/** Transcript grades that stay out of the GPA: they keep the class on your record, with no points. */
+export const NO_GPA = { P: 'P · pass', W: 'W · dropped', R: 'Retaken · replaced' };
+
+/** GPA over transcript rows ({ hours, letter }); P, W and retaken rows don't count. */
+export function transcriptGpa(rows, opts = {}) {
+  return semesterGpa(rows, opts);
+}
+
+/** Two pieces of GPA (hours + points) added together. Either can be null. */
+export function combineGpa(a, b) {
+  const hours = (a?.hours ?? 0) + (b?.hours ?? 0);
+  const points = (a?.points ?? 0) + (b?.points ?? 0);
+  return hours ? { gpa: points / hours, hours, points } : null;
+}

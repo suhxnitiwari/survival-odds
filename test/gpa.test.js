@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { adjustedPrior, cumulativeGpa, formatGpa, passes, pointsFor, semesterGpa } from '../js/gpa.js';
+import { NO_GPA, adjustedPrior, combineGpa, cumulativeGpa, formatGpa, passes, pointsFor, semesterGpa, transcriptGpa } from '../js/gpa.js';
 
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
 
@@ -52,4 +52,17 @@ test('past classes: an F turning into a P, and retakes that replace or add', () 
   const p = adjustedPrior(prior, [{ hours: 3, letter: 'F', change: 'replace', newLetter: null }]);
   close(cumulativeGpa(semesterGpa([{ hours: 3, letter: 'B' }]), p), (90 + 9) / 30);
   assert.equal(adjustedPrior({}, []), null);
+});
+
+test('transcript: P, W and retaken rows stay off the GPA, and pieces add up', () => {
+  const t = transcriptGpa([
+    { hours: 3, letter: 'A' }, { hours: 3, letter: 'B' },
+    { hours: 3, letter: 'P' }, { hours: 3, letter: 'W' }, { hours: 3, letter: 'R' },
+  ]);
+  assert.equal(t.hours, 6);
+  close(t.gpa, 3.5);
+  const both = combineGpa(t, { hours: 6, points: 18 });
+  close(both.gpa, 39 / 12);
+  assert.equal(combineGpa(null, null), null);
+  assert.ok(Object.keys(NO_GPA).every((k) => pointsFor(k) === null));
 });

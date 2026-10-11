@@ -412,3 +412,31 @@ label.inline input { width: 5rem; }
   .past-row .x { grid-row: 1; grid-column: 4; }
 }
 .past-row p.past-new { margin: 0 0 0.55rem; }
+
+/* ---------- before this semester: GPA or transcript ---------- */
+.hist-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+.seg { display: inline-flex; border: 1.5px solid var(--line); border-radius: 99px; padding: 3px; background: var(--surface-2); }
+.seg button { border: 0; background: none; color: var(--muted); font-weight: 600; font-size: 0.85rem; padding: 0.35rem 0.85rem; border-radius: 99px; }
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.transcript-total { margin: 0.75rem 0 0; font-weight: 600; }
+.transcript-total b { font: 800 1.3rem var(--display); }
+.terms { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 0.75rem; margin: 0.9rem 0; }
+.term { border: 1px solid var(--line); border-radius: 14px; padding: 0.75rem; background: var(--surface-2); }
+.term-head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.45rem; }
+.term-name { font: 700 1rem var(--display); background: transparent; border-color: transparent; padding-left: 0.2rem; }
+.term-name:hover, .term-name:focus { border-color: var(--line); background: var(--surface); }
+.term-gpa { font: 800 1.15rem var(--display); white-space: nowrap; }
+.term-gpa small { font: 500 0.75rem var(--body); }
+.term-row { display: grid; grid-template-columns: minmax(0, 1fr) 4.6rem 6.4rem 1.8rem; gap: 0.35rem; align-items: center; margin-bottom: 0.3rem; }
+.term-row input, .term-row select { padding: 0.35rem 0.45rem; }
+.term-row.is-off select { color: var(--muted); }
+.unit input { min-width: 0; }
+.file-btn { display: inline-flex; align-items: center; cursor: pointer; color: var(--accent); }
+.file-btn input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.file-btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.data-card h3 { margin-top: 0; }
+@media (max-width: 600px) {
+  .term-row { grid-template-columns: minmax(0, 1fr) 2.9rem 5.4rem 1.5rem; gap: 0.25rem; }
+  .term-row .unit small { display: none; }
+  .term-row input[type="number"] { text-align: center; padding-inline: 0.2rem; }
+}
