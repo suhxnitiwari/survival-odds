@@ -10,7 +10,7 @@
 
 Survival Odds reads your syllabi, pulls out the grade weights, class times and exam dates, and then does the three things I actually want during a semester:
 
-1. **"What do I need on the final?"** Enter grades as they come back and get the exact score you need for the grade you want. *"You need a 71 for an A. You're fine. Go to Cosmic."* Then drag a slider for each category still ahead (and one for the final) to see where you land. No syllabus handy? Type the categories and weights in yourself.
+1. **"What do I need on the final?"** Enter grades as they come back and get the exact score you need for the grade you want. *"You need a 71 for an A. You're fine. Go to Cosmic."* Then drag a slider for each category still ahead (and one for the final) to see where you land. No syllabus handy? Type the categories and weights in yourself. Just took a midterm and don't feel great? Pick it, and it shows what you need on it for an A, a B, a C and a D side by side. Every class can set its own scale: plus/minus, with an A+, plain 90/80/70/60, or any cutoff (an A at 96).
 2. **Study blocks that plan themselves.** It works backward from every exam and fits study sessions around your classes, your work shifts, and Saturday brunch.
 3. **Semester Wrapped.** A story-sized card of your semester (deadlines, exams, hardest class, worst week, survival odds) to post or send to the group chat.
 

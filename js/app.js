@@ -171,7 +171,7 @@ function gradeCard(course) {
             ${scale.filter(([, c]) => c > 0).map(([l]) => `<option ${l === target ? 'selected' : ''}>${l}</option>`).join('')}
           </select>
         </label>
-        ${open.length ? `<label>on
+        ${open.length ? `<label>What do I need on
           <select data-path="courses.${ci}.finalId">
             ${open.map((i) => `<option value="${i.id}" ${final?.id === i.id ? 'selected' : ''}>${esc(i.name)} (${Math.round((weights.get(i.id)?.weight ?? 0) * 100)}%)</option>`).join('')}
           </select></label>` : ''}
@@ -189,6 +189,11 @@ function gradeCard(course) {
       ${course.rules?.extraCreditMax ? `<label class="inline">Extra credit you've earned
         <input type="number" min="0" step="0.5" max="${course.rules.extraCreditMax}" value="${course.extraCredit ?? ''}" placeholder="0" data-path="courses.${ci}.extraCredit" data-type="optnumber"> points</label>` : ''}
     </details>` : ''}
+
+    <details class="scale-card" data-key="scale-${course.id}">
+      <summary>How this class grades <small class="muted">(an A starts at ${(course.scale ?? DEFAULT_SCALE).find(([l]) => l === 'A')?.[1] ?? '—'})</small></summary>
+      ${scaleEditor(course.scale ?? DEFAULT_SCALE, ci)}
+    </details>
 
     <details class="ladder" data-key="ladder-${course.id}">
       <summary>Every letter</summary>
@@ -228,7 +233,27 @@ function finalResult(course, table = finalTable(course, whatIfOf(course))) {
   const odds = oddsFor(n);
   return `<div class="big ${n <= 0 ? 'chill' : odds.key}">${n <= 0 ? '✓' : formatScore(n)}</div>
     <p class="verdict">${esc(verdict(row.needed, target, best && best.letter !== target ? best.letter : null))}</p>
-    ${gauge(n)}`;
+    ${gauge(n)}
+    ${letterRow(course, table)}`;
+}
+
+/** A, B, C, D side by side: "what do I need on this for a C? a B? an A?" Tap one to aim for it. */
+function letterRow(course, table) {
+  const target = course.target ?? 'A';
+  const item = pickFinal(course);
+  const rows = table.filter((r) => /^[A-D]$/.test(r.letter));
+  if (rows.length < 2) return '';
+  const ci = state.courses.indexOf(course);
+  return `<div class="letters">
+      <p class="tiny muted">On ${item ? esc(item.name) : 'what\'s left'}, you need</p>
+      <div class="letter-row">${rows.map((r) => {
+        const n = r.needed === null ? null : Math.ceil(r.needed * 10) / 10;
+        const text = n === null ? '—' : n <= 0 ? 'locked' : n > 100 ? 'out of reach' : formatScore(n);
+        const key = n === null ? '' : n <= 0 ? 'chill' : oddsFor(n).key;
+        return `<button class="letter ${r.letter === target ? 'is-target' : ''}" data-action="set-target" data-course="${ci}" data-letter="${r.letter}" aria-pressed="${r.letter === target}">
+          <b>${r.letter}</b><span class="odds-${key}">${text}</span></button>`;
+      }).join('')}</div>
+    </div>`;
 }
 
 /** 0–100 on the final, split into the ODDS bands, with a marker at what you need. */
@@ -253,7 +278,8 @@ function gauge(n) {
 //
 // One slider per category that still has work left (what you average on the
 // rest of it) and one for the final. course.whatIf = { [categoryId]: 0–100 },
-// course.finalGuess = 0–100. A slider you haven't touched sits at your pace.
+// course.finalGuess = { id, value } for whichever item is "the final" right now.
+// A slider you haven't touched sits at your pace.
 
 const FINAL_KEY = '__final';
 const whatIfOf = (course) => (course.whatIf && typeof course.whatIf === 'object' ? course.whatIf : {});
@@ -281,7 +307,7 @@ function playRows(course) {
       key: FINAL_KEY,
       name: final.name,
       note: `${Math.round(weights.get(final.id).weight * 100)}% of your grade`,
-      value: course.finalGuess ?? pace(final.category),
+      value: course.finalGuess?.id === final.id ? course.finalGuess.value : pace(final.category),
     });
   }
   return rows;
@@ -290,7 +316,7 @@ function playRows(course) {
 function playPanel(course) {
   const rows = playRows(course);
   if (!rows.length) return '';
-  const touched = Object.keys(whatIfOf(course)).length || course.finalGuess !== undefined;
+  const touched = Object.keys(whatIfOf(course)).length || course.finalGuess?.id === pickFinal(course)?.id;
   return `<section class="play">
     <div class="play-head">
       <div>
@@ -576,8 +602,8 @@ function classCard(course, ci) {
         <label>Exam average needed to pass <input type="number" min="0" max="100" value="${course.rules?.passExams ?? ''}" placeholder="none" data-path="${p}.rules.passExams" data-type="optnumber"></label>
         <label>Extra credit, at most (points) <input type="number" min="0" max="20" step="0.5" value="${course.rules?.extraCreditMax ?? ''}" placeholder="none" data-path="${p}.rules.extraCreditMax" data-type="optnumber"></label>
       </div>
-      <p class="tiny muted">Grading scale: ${(course.scale ?? DEFAULT_SCALE).filter(([, m]) => m > 0).map(([l, m]) => `${l} ${m}`).join(' · ')}
-        ${course.scale ? `<button class="linkish" data-action="reset-scale" data-course="${ci}">use the standard scale</button>` : ''}</p>
+      <h4 class="scale-h">How this class grades</h4>
+      ${scaleEditor(course.scale ?? DEFAULT_SCALE, ci)}
       ${describeRules(course).some((r) => r.source) ? `<details class="src-all" data-key="src-${course.id}"><summary>Where these came from</summary>${rulesList(course)}</details>` : ''}
     </div>
 
@@ -607,6 +633,28 @@ function classCard(course, ci) {
 
     <div class="danger-row"><button class="ghost small bad" data-action="del-course" data-course="${ci}">Delete ${esc(course.code || 'this class')}</button></div>
   </details>`;
+}
+
+// ---------- grading scale ----------
+
+const SCALES = {
+  plusminus: { label: 'A 93 · A- 90 · B+ 87…', scale: DEFAULT_SCALE },
+  aplus: { label: 'With A+ (97 and up)', scale: [['A+', 97], ...DEFAULT_SCALE] },
+  straight: { label: 'A 90 · B 80 · C 70 · D 60, no + or −', scale: [['A', 90], ['B', 80], ['C', 70], ['D', 60], ['F', 0]] },
+};
+
+const sameScale = (a, b) => a.length === b.length && a.every(([l, m], k) => l === b[k][0] && m === b[k][1]);
+
+/** Presets plus every cutoff editable, so "an A is 96 and up" works too. `ci` is a course index or 'draft'. */
+function scaleEditor(scale, ci) {
+  const pathFor = (k) => (ci === 'draft' ? `data-draft="scale.${k}"` : `data-path="courses.${ci}.scale.${k}.1" data-type="cutoff"`);
+  const letters = new Set(scale.map(([l]) => l));
+  const preset = Object.entries(SCALES).find(([, p]) => p.scale.length === scale.length && p.scale.every(([l]) => letters.has(l)))?.[0];
+  return `<div class="scale-edit">
+      <div class="quick-add">${Object.entries(SCALES).map(([key, p]) => `<button class="chip ${key === preset ? 'is-on' : ''}" data-action="set-scale" data-preset="${key}" data-course="${ci}">${p.label}</button>`).join('')}</div>
+      <div class="scale-grid">${scale.map(([l, m], k) => (m > 0 ? `<label><b>${l}</b><input type="number" min="1" max="100" step="any" value="${m}" ${pathFor(k)} aria-label="${l} starts at"></label>` : '')).join('')}</div>
+      <p class="tiny muted">The lowest score that still gets each letter. Change any number to match your syllabus.</p>
+    </div>`;
 }
 
 // ---------- quick setup: type the categories in ----------
@@ -657,6 +705,8 @@ function quickSetup() {
       <button class="chip" data-action="draft-add" data-name="">+ Other</button>
     </div>
     <p class="quick-total">Total <b data-draft-total>${totalNote()}</b></p>
+    <h4 class="scale-h">How this class grades</h4>
+    ${scaleEditor(draft.scale ?? DEFAULT_SCALE, 'draft')}
     <div class="row-actions">
       <button class="primary" data-action="draft-create">Add this class ✦</button>
       <button class="ghost" data-action="draft-cancel">Cancel</button>
@@ -685,6 +735,7 @@ function courseFromDraft() {
   const course = {
     id: uid(), code: draft.code.trim() || 'My class', name: '', color: PALETTE[state.courses.length % PALETTE.length], target: 'A',
     meetings: [], categories: [], items: [],
+    ...(draft.scale && !sameScale(draft.scale, DEFAULT_SCALE) ? { scale: draft.scale } : {}),
   };
   for (const r of rows) {
     const cat = { id: uid(), name: r.name.trim(), weight: Number(r.weight), dropLowest: 0 };
@@ -710,7 +761,10 @@ app.addEventListener('input', (e) => {
   const key = e.target.dataset?.draft;
   if (!key || !draft) return;
   if (key === 'code') draft.code = e.target.value;
-  else {
+  else if (key.startsWith('scale.')) {
+    draft.scale ??= DEFAULT_SCALE.map((r) => [...r]);
+    draft.scale[Number(key.split('.')[1])][1] = Number(e.target.value);
+  } else {
     const [i, field] = key.split('.');
     draft.rows[i][field] = field === 'name' ? e.target.value : e.target.value === '' ? '' : Number(e.target.value);
   }
@@ -851,7 +905,7 @@ app.addEventListener('input', (e) => {
   if (playCourse) {
     const course = courseById(playCourse);
     const value = Number(e.target.value);
-    if (playKey === FINAL_KEY) course.finalGuess = value;
+    if (playKey === FINAL_KEY) course.finalGuess = { id: pickFinal(course).id, value };
     else course.whatIf = { ...whatIfOf(course), [playKey]: value };
     app.querySelector(`[data-v="${playCourse}-${playKey}"]`).textContent = `${value}%`;
     playLive(course);
@@ -893,6 +947,8 @@ function getParent(path) {
 function setField(el) {
   const path = el.dataset.path;
   if (path.startsWith('semester.') && !state.semester) state.semester = { name: '', start: '', end: '' };
+  const scaleEdit = path.match(/^courses\.(\d+)\.scale\./);
+  if (scaleEdit && !state.courses[scaleEdit[1]].scale) state.courses[scaleEdit[1]].scale = DEFAULT_SCALE.map((r) => [...r]);
   const [obj, key] = getParent(path);
 
   if (el.dataset.day !== undefined) {
@@ -917,6 +973,10 @@ function setField(el) {
   if (type === 'optnumber') {
     if (raw === '' || Number(raw) === 0) delete obj[key];
     else obj[key] = Number(raw);
+    return;
+  }
+  if (type === 'cutoff') {
+    if (raw !== '') obj[key] = Number(raw);
     return;
   }
   if (type === 'score') obj[key] = raw === '' ? null : Number(raw);
@@ -969,7 +1029,17 @@ document.addEventListener('click', (e) => {
       imports = imports.filter((i) => i !== entry);
       if (!imports.length) showCard(entry.course.id);
     },
-    'reset-scale'() { delete course.scale; },
+    'set-scale'() {
+      const scale = SCALES[btn.dataset.preset].scale.map((r) => [...r]);
+      if (btn.dataset.course === 'draft') {
+        draft.scale = scale;
+        return;
+      }
+      if (btn.dataset.preset === 'plusminus') delete course.scale;
+      else course.scale = scale;
+      if (!scale.some(([l]) => l === course.target)) course.target = 'A';
+    },
+    'set-target'() { course.target = btn.dataset.letter; },
     'reset-play'() {
       delete course.whatIf;
       delete course.finalGuess;

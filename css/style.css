@@ -343,3 +343,26 @@ label.inline input { width: 5rem; }
 @media (max-width: 600px) {
   .quick-row { grid-template-columns: minmax(0, 1fr) 5.2rem 4rem 1.8rem; }
 }
+
+/* A B C D: what you need on this one for each */
+.letters { margin-top: 1rem; }
+.letters .tiny { margin: 0 0 0.4rem; }
+.letter-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.4rem; }
+.letter {
+  display: grid; gap: 0.1rem; padding: 0.45rem 0.25rem; border-radius: 12px; border: 1.5px solid var(--line);
+  background: var(--surface); color: var(--ink);
+}
+.letter b { font: 800 1.2rem/1 var(--display); }
+.letter span { font-size: 0.78rem; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.letter.is-target { border-color: var(--c, var(--accent)); box-shadow: 0 0 0 1px var(--c, var(--accent)); }
+.letter:hover { border-color: var(--c, var(--accent)); }
+
+/* grading scale */
+.scale-h { font-size: 0.95rem; margin: 1.1rem 0 0.2rem; }
+.scale-edit .quick-add { margin-top: 0.4rem; }
+.chip.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); font-weight: 600; }
+.scale-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(6.2rem, 1fr)); gap: 0.4rem; margin-top: 0.6rem; }
+.scale-grid label { display: flex; align-items: center; gap: 0.35rem; color: var(--ink); }
+.scale-grid label b { width: 1.6rem; font-family: var(--display); }
+.scale-grid input { padding: 0.3rem 0.4rem; }
+.scale-card .scale-edit { text-align: left; }
