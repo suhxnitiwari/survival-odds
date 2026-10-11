@@ -13,7 +13,7 @@ import { parseSyllabus } from './parser.js';
 import { toCourse } from './importer.js';
 import { DEFAULT_MODEL, readWithGemini } from './ai.js';
 import { pdfText } from './pdf.js';
-import { POINTS, cumulativeGpa, formatGpa, pointsFor, semesterGpa } from './gpa.js';
+import { POINTS, adjustedPrior, cumulativeGpa, formatGpa, passes, pointsFor, semesterGpa } from './gpa.js';
 
 const PALETTE = ['#d6336c', '#7048e8', '#0c8599', '#e8590c', '#2f9e44', '#1971c2', '#ae3ec9', '#f08c00'];
 const KINDS = ['exam', 'quiz', 'homework', 'project', 'paper', 'participation'];
@@ -377,17 +377,41 @@ function playLive(course) {
 //
 // Each class counts at the letter it's headed for (the same projection as the
 // sliders on The final), unless you pick a letter yourself. course.hours,
-// course.gpaLetter (your pick), course.whatIfDrop; state.gpa = { prior, priorHours, aPlus }.
+// course.gpaLetter (your pick), course.whatIfDrop, course.passFail + passAt;
+// state.gpa = { prior, priorHours, aPlus, past: [changes to past classes] }.
+
+const LETTERS = Object.keys(POINTS);
+const PAST_CHANGES = {
+  pass: 'It becomes a P',
+  replace: 'Retake: new grade replaces it',
+  both: 'Retake: both grades count',
+};
+
+function scaleLetters(course) {
+  return (course.scale ?? DEFAULT_SCALE).map(([l]) => l).filter((l) => l in POINTS);
+}
 
 function gpaRow(course) {
   const headed = summarize(course).current === null ? null : landing(course).letter;
+  const letter = course.gpaLetter || headed;
+  const letters = scaleLetters(course);
+  const passAt = letters.includes(course.passAt) ? course.passAt : letters.includes('C-') ? 'C-' : 'C';
+  const pf = course.passFail && letter ? (passes(letter, passAt, letters) ? 'P' : 'F') : null;
   return {
-    course,
-    headed,
-    letter: course.gpaLetter || headed,
+    course, headed, letters, passAt, pf,
+    letter: pf === 'F' ? 'F' : letter,
+    pass: pf === 'P',
     hours: course.hours ?? 3,
     dropped: !!course.whatIfDrop,
   };
+}
+
+/** Changes to past classes, with a retake of a class this semester pointing at it (it already counts there). */
+function pastChanges(g) {
+  return (g.past ?? []).map((c) => ({
+    ...c,
+    newLetter: c.newGrade?.startsWith('course:') ? null : c.newGrade || null,
+  })).filter((c) => c.change === 'pass' || c.newGrade); // a retake waits until you pick the new grade
 }
 
 function renderGpa() {
@@ -395,9 +419,10 @@ function renderGpa() {
   const opts = { aPlus: g.aPlus ? 4.33 : 4 };
   const rows = state.courses.map(gpaRow);
   const sem = semesterGpa(rows, opts);
-  const prior = { gpa: g.prior, hours: g.priorHours };
-  const overall = cumulativeGpa(sem, prior);
-  const hasPrior = Number(g.priorHours) > 0 && g.prior !== undefined;
+  const before = adjustedPrior({ gpa: g.prior, hours: g.priorHours }, [], opts);
+  const prior = adjustedPrior({ gpa: g.prior, hours: g.priorHours }, pastChanges(g), opts);
+  const overall = prior ? cumulativeGpa(sem, prior) : null;
+  const overallBefore = before ? cumulativeGpa(sem, before) : null;
   const without = (row) => semesterGpa(rows.map((r) => (r === row ? { ...r, dropped: true } : r)), opts);
   const delta = (a, b) => {
     if (a === null || b === null) return '';
@@ -405,6 +430,8 @@ function renderGpa() {
     return d === 0 ? '<small class="muted">same</small>' : `<small class="${d > 0 ? 'ok' : 'bad'}">${d > 0 ? '+' : ''}${d.toFixed(2)}</small>`;
   };
   const anyMissing = rows.some((r) => !r.dropped && !r.letter);
+  const enrolled = rows.filter((r) => !r.dropped).reduce((sum, r) => sum + (Number(r.hours) || 0), 0);
+  const past = g.past ?? [];
 
   return `
   <div class="stack gpa">
@@ -412,39 +439,48 @@ function renderGpa() {
       <div class="gpa-big">
         <span>This semester</span>
         <b>${formatGpa(sem.gpa)}</b>
-        <small class="muted">${sem.hours} hour${sem.hours === 1 ? '' : 's'}${rows.some((r) => r.dropped) ? ` · after dropping ${rows.filter((r) => r.dropped).map((r) => esc(r.course.code)).join(', ')}` : ''}</small>
+        <small class="muted">${sem.hours} hour${sem.hours === 1 ? '' : 's'} in your GPA${rows.some((r) => r.dropped) ? ` · after dropping ${rows.filter((r) => r.dropped).map((r) => esc(r.course.code)).join(', ')}` : ''}</small>
       </div>
       <div class="gpa-big">
         <span>Overall</span>
-        <b>${hasPrior ? formatGpa(overall) : '—'}</b>
-        <small class="muted">${hasPrior ? `${Number(g.priorHours) + sem.hours} hours with this semester` : 'Add your GPA so far below'}</small>
+        <b>${prior ? formatGpa(overall) : '—'}</b>
+        <small class="muted">${prior
+          ? `${prior.hours + sem.hours} hours in your GPA${past.length && overallBefore !== null ? ` · ${delta(overall, overallBefore)} from past-class changes` : ''}`
+          : 'Add your GPA so far below'}</small>
       </div>
       <div class="grid2 gpa-prior">
         <label>GPA so far <input type="number" inputmode="decimal" min="0" max="4.33" step="0.01" value="${g.prior ?? ''}" placeholder="3.50" data-path="gpa.prior" data-type="optnumber"></label>
-        <label>Hours so far <input type="number" inputmode="numeric" min="0" step="1" value="${g.priorHours ?? ''}" placeholder="45" data-path="gpa.priorHours" data-type="optnumber"></label>
+        <label>Hours in it so far <input type="number" inputmode="numeric" min="0" step="1" value="${g.priorHours ?? ''}" placeholder="45" data-path="gpa.priorHours" data-type="optnumber"></label>
       </div>
-      <p class="tiny muted">From your transcript, before this semester. Leave it empty for a semester GPA only.</p>
+      <p class="tiny muted">From your transcript, before this semester. Count only hours that are in your GPA (not pass/fail or transfer credit).</p>
     </section>
 
     <section class="card">
-      <h2>Your classes</h2>
-      <p class="muted">Each class counts at the grade it's headed for (your sliders on The final). Pick a letter to try another, or drop a class to see what it does.</p>
+      <h2>This semester</h2>
+      <p class="muted">Each class counts at the grade it's headed for (your sliders on The final). Pick a letter to try another, mark a class pass/fail, or drop one to see what it does.</p>
       <div class="gpa-table">
         <div class="gpa-tr gpa-th"><span>Class</span><span>Hours</span><span>Grade</span><span>Without it</span><span>Drop</span></div>
         ${rows.map((r) => {
           const ci = state.courses.indexOf(r.course);
-          const scale = (r.course.scale ?? DEFAULT_SCALE).map(([l]) => l).filter((l) => l in POINTS);
           const w = without(r);
           const p = pointsFor(r.letter, opts);
+          const note = r.pf === 'P' ? `<b class="ok">P</b> · passing, so it stays out of your GPA`
+            : r.pf === 'F' ? `<b class="bad">F</b> · below ${r.passAt}, so it counts as 0.00`
+            : p === null ? 'pick a letter' : `${p.toFixed(2)} points`;
           return `<div class="gpa-tr ${r.dropped ? 'is-dropped' : ''}" style="--c:${r.course.color}">
             <span class="gpa-class"><span class="dot"></span><b>${esc(r.course.code)}</b>${r.dropped ? ' <small class="muted">dropped</small>' : ''}</span>
             <span class="unit"><input type="number" inputmode="numeric" min="0" max="6" step="1" value="${r.hours}" data-path="courses.${ci}.hours" data-type="number" aria-label="${esc(r.course.code)} credit hours"><small>hrs</small></span>
             <span class="gpa-grade">
               <select data-path="courses.${ci}.gpaLetter" aria-label="${esc(r.course.code)} grade">
                 <option value="">${r.headed ? `Headed for ${r.headed}` : 'No grades yet'}</option>
-                ${scale.map((l) => `<option value="${l}" ${r.course.gpaLetter === l ? 'selected' : ''}>${l}</option>`).join('')}
+                ${r.letters.map((l) => `<option value="${l}" ${r.course.gpaLetter === l ? 'selected' : ''}>${l}</option>`).join('')}
               </select>
-              <small class="muted">${p === null ? 'pick a letter' : `${p.toFixed(2)} points`}</small>
+              <small class="muted">${note}</small>
+              <span class="pf">
+                <label class="drop-toggle"><input type="checkbox" ${r.course.passFail ? 'checked' : ''} data-path="courses.${ci}.passFail" data-type="bool"><span>Pass/fail</span></label>
+                ${r.course.passFail ? `<label class="pf-at">pass at
+                  <select data-path="courses.${ci}.passAt" aria-label="Lowest passing grade">${r.letters.filter((l) => l !== 'F').map((l) => `<option ${l === r.passAt ? 'selected' : ''}>${l}</option>`).join('')}</select> or better</label>` : ''}
+              </span>
             </span>
             <span class="gpa-without">${r.dropped ? '—' : `${formatGpa(w.gpa)} ${delta(w.gpa, sem.gpa)}`}</span>
             <span><label class="drop-toggle"><input type="checkbox" ${r.dropped ? 'checked' : ''} data-path="courses.${ci}.whatIfDrop" data-type="bool" aria-label="Drop ${esc(r.course.code)}"><span>Drop</span></label></span>
@@ -452,8 +488,27 @@ function renderGpa() {
         }).join('')}
       </div>
       ${anyMissing ? '<p class="tiny muted">Classes with no grades yet don\'t count until you pick a letter.</p>' : ''}
-      ${sem.hours > 0 && sem.hours < 12 ? `<p class="warn">That's ${sem.hours} hours. At a lot of schools under 12 is part-time, which can affect financial aid, scholarships and visas. Check with your advisor before you drop.</p>` : ''}
+      ${enrolled < 12 && rows.some((r) => r.dropped) ? `<p class="warn">Dropping leaves you with ${enrolled} hours. At a lot of schools under 12 is part-time, which can affect financial aid, scholarships and visas. Check with your advisor before you drop.</p>` : ''}
       <label class="radio gpa-aplus"><input type="checkbox" ${g.aPlus ? 'checked' : ''} data-path="gpa.aPlus" data-type="bool"><span>My school counts an A+ as 4.33 <small class="muted">(most count it as 4.0)</small></span></label>
+    </section>
+
+    <section class="card">
+      <h2>Past classes</h2>
+      <p class="muted">An old grade turning into a P, or a class you're retaking. Schools handle retakes differently (some replace the old grade, some count both), so pick what yours does.</p>
+      ${!prior && past.length ? '<p class="warn">Add your GPA and hours so far above, so there\'s something to change.</p>' : ''}
+      ${past.map((c, pi) => `<div class="past-row">
+        <label>Class <input value="${esc(c.name)}" placeholder="Class name" data-path="gpa.past.${pi}.name"></label>
+        <label>Hours <input type="number" inputmode="numeric" min="0" max="6" step="1" value="${c.hours}" data-path="gpa.past.${pi}.hours" data-type="number"></label>
+        <label>Old grade <select data-path="gpa.past.${pi}.letter">${LETTERS.map((l) => `<option ${l === c.letter ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+        <label class="past-change">What changes <select data-path="gpa.past.${pi}.change">${Object.entries(PAST_CHANGES).map(([k, t]) => `<option value="${k}" ${k === c.change ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+        ${c.change !== 'pass' ? `<label class="past-new">New grade <select data-path="gpa.past.${pi}.newGrade">
+          <option value="">Pick one</option>
+          ${state.courses.map((course) => `<option value="course:${course.id}" ${c.newGrade === `course:${course.id}` ? 'selected' : ''}>Retaking it now as ${esc(course.code)}</option>`).join('')}
+          ${LETTERS.map((l) => `<option value="${l}" ${c.newGrade === l ? 'selected' : ''}>${l}</option>`).join('')}
+        </select></label>` : '<p class="past-new tiny muted">Comes out of your GPA: no hours, no points.</p>'}
+        <button class="x" data-action="del-past" data-index="${pi}" aria-label="Remove">×</button>
+      </div>`).join('')}
+      <button class="ghost small" data-action="add-past">+ Add a past class</button>
     </section>
   </div>`;
 }
@@ -1131,6 +1186,11 @@ document.addEventListener('click', (e) => {
       if (!scale.some(([l]) => l === course.target)) course.target = 'A';
     },
     'set-target'() { course.target = btn.dataset.letter; },
+    'add-past'() {
+      state.gpa ??= {};
+      (state.gpa.past ??= []).push({ id: uid(), name: '', hours: 3, letter: 'F', change: 'pass', newGrade: '' });
+    },
+    'del-past'() { state.gpa.past.splice(Number(btn.dataset.index), 1); },
     'reset-play'() {
       delete course.whatIf;
       delete course.finalGuess;

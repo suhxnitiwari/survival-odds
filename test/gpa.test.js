@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cumulativeGpa, formatGpa, pointsFor, semesterGpa } from '../js/gpa.js';
+import { adjustedPrior, cumulativeGpa, formatGpa, passes, pointsFor, semesterGpa } from '../js/gpa.js';
 
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} ≈ ${b}`);
 
@@ -31,4 +31,25 @@ test('overall GPA folds the semester into what you already have', () => {
   assert.equal(cumulativeGpa(sem, {}), 3);
   assert.equal(formatGpa(3.456), '3.46');
   assert.equal(formatGpa(null), '—');
+});
+
+test('pass/fail: a pass stays out of the GPA, a fail counts as an F', () => {
+  assert.equal(passes('B', 'C-', ['A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'F']), true);
+  assert.equal(passes('D', 'C-', ['A', 'A-', 'B+', 'B', 'B-', 'C+', 'C', 'C-', 'D', 'F']), false);
+  close(semesterGpa([{ hours: 3, letter: 'A' }, { hours: 3, letter: 'B', pass: true }]).gpa, 4);
+  close(semesterGpa([{ hours: 3, letter: 'A' }, { hours: 3, letter: 'F' }]).gpa, 2);
+});
+
+test('past classes: an F turning into a P, and retakes that replace or add', () => {
+  const prior = { gpa: 3, hours: 30 }; // 90 points
+  // F (3 hrs) becomes a P: 90 points over 27 hours.
+  close(adjustedPrior(prior, [{ hours: 3, letter: 'F', change: 'pass' }]).gpa, 90 / 27);
+  // Retake a C, the new A replaces it: 90 - 6 + 12 over 30.
+  close(adjustedPrior(prior, [{ hours: 3, letter: 'C', change: 'replace', newLetter: 'A' }]).gpa, 96 / 30);
+  // Both count: 90 + 12 over 33.
+  close(adjustedPrior(prior, [{ hours: 3, letter: 'C', change: 'both', newLetter: 'A' }]).gpa, 102 / 33);
+  // Retaking this semester (already counted there): only the old grade comes out.
+  const p = adjustedPrior(prior, [{ hours: 3, letter: 'F', change: 'replace', newLetter: null }]);
+  close(cumulativeGpa(semesterGpa([{ hours: 3, letter: 'B' }]), p), (90 + 9) / 30);
+  assert.equal(adjustedPrior({}, []), null);
 });

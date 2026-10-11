@@ -21,20 +21,59 @@ export function semesterGpa(rows, opts = {}) {
   for (const r of rows) {
     const p = pointsFor(r.letter, opts);
     const h = Number(r.hours) || 0;
-    if (r.dropped || p === null || h <= 0) continue;
+    // A pass in a pass/fail class doesn't count; a fail comes in as letter F.
+    if (r.dropped || r.pass || p === null || h <= 0) continue;
     hours += h;
     points += p * h;
   }
   return { gpa: hours ? points / hours : null, hours, points };
 }
 
+/**
+ * The GPA you had, after changes to past classes. Each change is
+ * { hours, letter, change, newLetter }:
+ *   'pass'    the old grade turns into a P, so it comes out of the GPA
+ *   'replace' retaking it and the new grade replaces the old one
+ *   'both'    retaking it and both grades count
+ * newLetter is null when the retake is one of this semester's classes,
+ * which already counts there.
+ */
+export function adjustedPrior(prior, changes = [], opts = {}) {
+  let hours = Number(prior?.hours) || 0;
+  const gpa = Number(prior?.gpa);
+  if (!hours || !Number.isFinite(gpa)) return null;
+  let points = gpa * hours;
+  for (const c of changes) {
+    const h = Number(c.hours) || 0;
+    const old = pointsFor(c.letter, opts);
+    const neu = pointsFor(c.newLetter, opts);
+    if (!h || old === null) continue;
+    if (c.change === 'pass' || c.change === 'replace') {
+      hours -= h;
+      points -= old * h;
+    }
+    if ((c.change === 'replace' || c.change === 'both') && neu !== null) {
+      hours += h;
+      points += neu * h;
+    }
+  }
+  return { gpa: hours > 0 ? points / hours : null, hours: Math.max(0, hours), points };
+}
+
 /** This semester folded into the GPA you already have. */
 export function cumulativeGpa(semester, prior) {
   const priorHours = Number(prior?.hours) || 0;
-  const priorGpa = Number(prior?.gpa);
-  if (!priorHours || !Number.isFinite(priorGpa)) return semester.gpa;
+  const priorPoints = prior?.points ?? Number(prior?.gpa) * priorHours;
+  if (!priorHours || !Number.isFinite(priorPoints)) return semester.gpa;
   const hours = priorHours + semester.hours;
-  return hours ? (priorGpa * priorHours + semester.points) / hours : null;
+  return hours ? (priorPoints + semester.points) / hours : null;
+}
+
+/** Pass/fail: does `letter` clear `passAt` on this scale (letters best first)? */
+export function passes(letter, passAt, letters) {
+  const i = letters.indexOf(letter);
+  const j = letters.indexOf(passAt);
+  return i >= 0 && j >= 0 && i <= j;
 }
 
 export function formatGpa(g) {
