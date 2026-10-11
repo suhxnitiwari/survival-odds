@@ -121,7 +121,8 @@ label.block { margin: 1rem 0; }
 .hero-actions { display: flex; gap: 0.6rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; }
 
 /* ---------- the final ---------- */
-#app > .stack:has(.final-box) { grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); align-items: start; }
+#app > .stack:has(.final-box) { grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); align-items: start; }
+#app > .stack:has(> .card:only-child) { max-width: 560px; margin: 0 auto; }
 .now { text-align: right; }
 .now-num { display: block; font: 700 1.6rem var(--display); }
 .now-letter { font-size: 0.8rem; color: var(--muted); font-weight: 600; }
@@ -162,12 +163,6 @@ label.block { margin: 1rem 0; }
 .odds-out { color: var(--nope); }
 @media (prefers-reduced-motion: reduce) { .gauge-mark { transition: none; } }
 
-/* what-if slider */
-.what-if { margin-top: 1rem; padding-top: 0.9rem; border-top: 1px dashed var(--line); text-align: left; }
-.what-if-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
-.what-if-head label { display: block; color: var(--ink); font-size: 0.88rem; }
-.what-if-head b { font: 700 1.15rem var(--display); color: var(--accent); font-variant-numeric: tabular-nums; }
-.what-if input[type="range"] { padding: 0; border: 0; background: none; accent-color: var(--accent); margin-top: 0.4rem; }
 .verdict { font-weight: 600; margin: 0; }
 details summary { cursor: pointer; font-weight: 600; margin-top: 0.9rem; color: var(--accent); }
 .ladder-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 0.4rem; margin-top: 0.6rem; }
@@ -311,3 +306,40 @@ label.inline { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.6r
 label.inline input { width: 5rem; }
 .rules-edit { display: grid; gap: 0.3rem; }
 .rules-edit .radio input { accent-color: var(--accent); }
+
+/* ---------- drag to see where you land ---------- */
+[data-card] { scroll-margin-top: 140px; }
+.play { margin-top: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 14px; }
+.play h3 { margin: 0; font-size: 1.05rem; }
+.play-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; margin-bottom: 0.4rem; }
+.play-out { text-align: right; flex: none; display: grid; justify-items: end; }
+.proj-kicker { font-size: 0.7rem; color: var(--muted); font-weight: 600; }
+.proj-num { font: 900 2rem/1 var(--display); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.proj-num.hit { color: var(--good); }
+.proj-num.miss { color: var(--tight); }
+.proj-letter { font-weight: 700; font-size: 0.85rem; }
+.play-row { padding: 0.55rem 0 0.2rem; border-top: 1px solid var(--line); }
+.play-row:first-of-type { border-top: 0; }
+.play-label { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+.play-label label { display: block; color: var(--ink); font-size: 0.9rem; font-weight: 600; }
+.play-label small { font-weight: 400; }
+.play-label b { font: 700 1.05rem var(--display); color: var(--c, var(--accent)); font-variant-numeric: tabular-nums; }
+.play input[type="range"] { padding: 0; border: 0; background: none; accent-color: var(--c, var(--accent)); margin: 0.3rem 0 0; height: 1.6rem; }
+.need-line { margin: 0 0 0.2rem; font-weight: 600; color: var(--ink); }
+.play .linkish { margin-top: 0.4rem; }
+.entry-list li.is-in input { background: var(--surface-2); }
+
+/* ---------- quick setup ---------- */
+.quick { border: 2px solid color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.quick-code { max-width: 14rem; margin-top: 0.75rem; }
+.quick-rows { margin-top: 0.9rem; display: grid; gap: 0.4rem; }
+.quick-row { display: grid; grid-template-columns: minmax(0, 1fr) 6.5rem 5.5rem 2rem; gap: 0.4rem; align-items: center; }
+.quick-labels { font-size: 0.75rem; color: var(--muted); font-weight: 600; }
+.unit { display: flex; align-items: center; gap: 0.25rem; color: var(--muted); }
+.quick-add { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; margin-top: 0.8rem; }
+.chip { border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); border-radius: 99px; padding: 0.25rem 0.7rem; font-size: 0.8rem; font-weight: 500; }
+.chip:hover { border-color: var(--accent); color: var(--accent); }
+.quick-total { margin: 0.9rem 0 0; font-weight: 600; }
+@media (max-width: 600px) {
+  .quick-row { grid-template-columns: minmax(0, 1fr) 5.2rem 4rem 1.8rem; }
+}

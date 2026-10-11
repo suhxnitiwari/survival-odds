@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  finalTable, itemWeights, letterFor, neededOnItem, neededOnRemaining, pickFinal, summarize, verdict,
+  categoryPace, finalTable, itemWeights, letterFor, neededOnItem, neededOnRemaining, pickFinal, projectGrade, summarize, verdict,
 } from '../js/grades.js';
 
 const close = (a, b, eps = 1e-6) => assert.ok(Math.abs(a - b) < eps, `${a} ≈ ${b}`);
@@ -129,4 +129,17 @@ test('what-if: assuming a different average on the rest changes what the final n
   close(worse, (90 - 18 - 10) / 0.6, 1e-6);
   close(perfect, (90 - 18 - 20) / 0.6, 1e-6);
   assert.equal(finalTable(c, 100).find((r) => r.letter === 'A-').needed, perfect);
+});
+
+test('what-if per category, and the projected grade with a score on the final', () => {
+  // 40% homework (h1 90%, h2 open), 60% final (open).
+  const c = course();
+  c.items[1].earned = null;
+  close(neededOnItem(c, 'f', 90, { hw: 50 }), (90 - 18 - 10) / 0.6);
+  close(neededOnItem(c, 'f', 90, { other: 50 }), 90); // categories left out keep their pace
+  const p = projectGrade(c, { hw: 100 }, 'f', 80);
+  close(p.grade, 18 + 20 + 48);
+  assert.equal(p.letter, 'B');
+  close(categoryPace(c, 'hw'), 90);
+  assert.equal(categoryPace(c, 'fin'), null);
 });

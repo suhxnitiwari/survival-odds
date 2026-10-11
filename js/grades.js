@@ -199,24 +199,60 @@ export function pickFinal(course) {
     ?? null;
 }
 
+/** Your average so far in one category (0–100), or null if nothing in it is graded. */
+export function categoryPace(course, categoryId) {
+  const done = course.items.filter((i) => i.category === categoryId && isGraded(i));
+  const possible = done.reduce((sum, i) => sum + i.possible, 0);
+  return possible > 0 ? (done.reduce((sum, i) => sum + i.earned, 0) / possible) * 100 : null;
+}
+
+/**
+ * What-if: what the ungraded work averages (0–100). A number applies to
+ * everything left; an object sets it per category ({ hw: 90, quizzes: 70 }),
+ * and categories it leaves out keep their pace.
+ */
+function assumeFor(assume, item) {
+  if (typeof assume === 'number') return assume;
+  const v = assume?.[item.category];
+  return typeof v === 'number' ? v : null;
+}
+
 /**
  * The score you need on one item to finish at `target`, assuming everything
  * else still ungraded goes the way that category has gone so far (or your
- * overall average, or your target if nothing is graded yet). Pass `assume`
- * (0–100) to say what the rest averages instead: the what-if slider.
+ * overall average, or your target if nothing is graded yet). `assume`
+ * overrides that, per the what-if sliders.
  */
 export function neededOnItem(course, itemId, target, assume = null) {
   if ((itemWeights(course).get(itemId)?.weight ?? 0) < 1e-9) return null;
   const s = summarize(course);
   const base = projected(course, s.current !== null ? s.current / 100 : target / 100);
-  if (assume !== null) {
-    for (const item of course.items) if (!isGraded(item)) base.set(item.id, assume / 100);
+  for (const item of course.items) {
+    const v = isGraded(item) ? null : assumeFor(assume, item);
+    if (v !== null) base.set(item.id, v / 100);
   }
   return smallestScore((x) => {
     const values = new Map(base);
     values.set(itemId, x / 100);
     return totalGrade(course, values);
   }, target);
+}
+
+/**
+ * Where the class ends up if the rest goes like the what-if sliders say:
+ * `assume` per category (as above), and `finalScore` (0–100) on the final.
+ * Returns the grade with extra credit and rounding, and its letter.
+ */
+export function projectGrade(course, assume = null, finalId = null, finalScore = null) {
+  const s = summarize(course);
+  const values = projected(course, s.current !== null ? s.current / 100 : 0.85);
+  for (const item of course.items) {
+    const v = isGraded(item) ? null : assumeFor(assume, item);
+    if (v !== null) values.set(item.id, v / 100);
+  }
+  if (finalId && finalScore !== null) values.set(finalId, finalScore / 100);
+  const grade = totalGrade(course, values);
+  return { grade, letter: letterFor(grade, course.scale) };
 }
 
 /** "What do I need on the final?" for every letter on the scale. */

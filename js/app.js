@@ -1,6 +1,7 @@
 import { WEEKDAYS, addDays, formatTime, parseTime, prettyDate, shortDate, todayLocal, toTimeInput } from './dates.js';
 import {
-  DEFAULT_SCALE, ODDS, describeRules, examAverage, finalTable, formatScore, isGraded, itemWeights, oddsFor, pickFinal, summarize, verdict,
+  DEFAULT_SCALE, ODDS, categoryPace, describeRules, examAverage, finalTable, formatScore, isGraded, itemWeights, oddsFor, pickFinal,
+  projectGrade, summarize, verdict,
 } from './grades.js';
 import { DEFAULT_PREFS, RULES, planStudy, upcomingExams } from './planner.js';
 import { buildCalendar } from './ics.js';
@@ -26,6 +27,7 @@ let tab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'grad
 let reader = { mode: 'builtin', apiKey: '', model: DEFAULT_MODEL, ...loadReader() };
 let imports = []; // syllabi being read or waiting for review (not saved)
 let pasteText = '';
+let draft = null; // the quick "type your categories in" form, before it becomes a class
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -90,7 +92,7 @@ function emptyState() {
       ${dropzone('hero-drop')}
       <div class="hero-actions">
         <button class="ghost" data-action="sample">Try it with a made-up semester</button>
-        <button class="ghost" data-action="start">Enter grade weights myself</button>
+        <button class="ghost" data-action="start">Type in my grade weights</button>
       </div>
     </section>`;
 }
@@ -139,16 +141,13 @@ function gradeCard(course) {
   const s = summarize(course);
   const scale = course.scale ?? DEFAULT_SCALE;
   const target = course.target ?? 'A';
-  const table = finalTable(course, course.whatIf ?? null);
-  const row = table.find((r) => r.letter === target) ?? table[0];
+  const table = finalTable(course, whatIfOf(course));
   const final = pickFinal(course);
   const open = course.items.filter((i) => !isGraded(i));
   const weights = itemWeights(course);
-  // The what-if slider only matters when something besides the final is still ungraded.
-  const others = final ? open.filter((i) => i.id !== final.id && (weights.get(i.id)?.weight ?? 0) > 0) : [];
 
   return `
-  <article class="card" style="--c:${course.color}">
+  <article class="card" style="--c:${course.color}" data-card="${course.id}">
     <header class="card-head">
       <div>
         <h2><span class="dot"></span>${esc(course.code)}</h2>
@@ -178,8 +177,9 @@ function gradeCard(course) {
           </select></label>` : ''}
       </div>
       <div data-result="${course.id}">${finalResult(course, table)}</div>
-      ${others.length && row.needed !== null ? whatIf(course, ci, others) : ''}
     </div>
+
+    ${playPanel(course)}
 
     ${passWarning(course)}
     ${describeRules(course).length ? `
@@ -192,28 +192,30 @@ function gradeCard(course) {
 
     <details class="ladder" data-key="ladder-${course.id}">
       <summary>Every letter</summary>
-      <div class="ladder-grid">
-        ${table.map((r) => `<div class="rung ${r.letter === target ? 'is-target' : ''} ${r.needed !== null && r.needed > 100 ? 'is-out' : ''}">
-          <b>${r.letter}</b><span>${r.needed === null ? '—' : r.needed <= 0 ? 'locked ✓' : formatScore(Math.ceil(r.needed * 10) / 10)}</span></div>`).join('')}
-      </div>
+      <div class="ladder-grid" data-ladder="${course.id}">${ladder(course, table)}</div>
     </details>
 
-    ${open.length ? `
-    <details class="entry" data-key="entry-${course.id}" ${open.some((i) => i.date && i.date < today) ? 'open' : ''}>
-      <summary>Enter a grade</summary>
+    <details class="entry" data-key="entry-${course.id}" ${!course.items.some(isGraded) || open.some((i) => i.date && i.date < today) ? 'open' : ''}>
+      <summary>Your scores <small class="muted">(type one in when it comes back)</small></summary>
       <ul class="entry-list">
-        ${course.items.map((item, ii) => ({ item, ii })).filter(({ item }) => !isGraded(item)).map(({ item, ii }) => `
-          <li class="${item.date && item.date < today ? 'due' : ''}">
+        ${course.items.map((item, ii) => `
+          <li class="${!isGraded(item) && item.date && item.date < today ? 'due' : ''} ${isGraded(item) ? 'is-in' : ''}">
             <span>${esc(item.name)} <small class="muted">${item.date ? shortDate(item.date) : ''}</small></span>
-            <span class="score"><input type="number" inputmode="decimal" step="any" min="0" placeholder="—" data-path="courses.${ci}.items.${ii}.earned" data-type="score" aria-label="${esc(item.name)} score"> / ${item.possible}</span>
+            <span class="score"><input type="number" inputmode="decimal" step="any" min="0" placeholder="—" value="${isGraded(item) ? item.earned : ''}" data-path="courses.${ci}.items.${ii}.earned" data-type="score" aria-label="${esc(item.name)} score"> / ${item.possible}</span>
           </li>`).join('')}
       </ul>
-    </details>` : ''}
+    </details>
   </article>`;
 }
 
+function ladder(course, table) {
+  const target = course.target ?? 'A';
+  return table.map((r) => `<div class="rung ${r.letter === target ? 'is-target' : ''} ${r.needed !== null && r.needed > 100 ? 'is-out' : ''}">
+    <b>${r.letter}</b><span>${r.needed === null ? '—' : r.needed <= 0 ? 'locked ✓' : formatScore(Math.ceil(r.needed * 10) / 10)}</span></div>`).join('');
+}
+
 /** The big number, its one-liner, and the survival gauge. Patched live while the what-if slider moves. */
-function finalResult(course, table = finalTable(course, course.whatIf ?? null)) {
+function finalResult(course, table = finalTable(course, whatIfOf(course))) {
   const s = summarize(course);
   const target = course.target ?? 'A';
   const row = table.find((r) => r.letter === target) ?? table[0];
@@ -247,22 +249,96 @@ function gauge(n) {
     </div>`;
 }
 
-/** "What if the rest of my work goes like this?" Changes the assumption behind the number. */
-function whatIf(course, ci, others) {
-  const on = course.whatIf !== undefined && course.whatIf !== null;
-  const pace = Math.round(summarize(course).current ?? 85);
-  const value = on ? course.whatIf : pace;
-  const names = others.length === 1 ? esc(others[0].name) : `the other ${others.length} things left`;
-  return `<div class="what-if">
-      <div class="what-if-head">
-        <label for="wi-${course.id}">What if ${names} average</label>
-        <b data-wi="${course.id}">${value}%</b>
+// ---------- drag to see where you land ----------
+//
+// One slider per category that still has work left (what you average on the
+// rest of it) and one for the final. course.whatIf = { [categoryId]: 0–100 },
+// course.finalGuess = 0–100. A slider you haven't touched sits at your pace.
+
+const FINAL_KEY = '__final';
+const whatIfOf = (course) => (course.whatIf && typeof course.whatIf === 'object' ? course.whatIf : {});
+
+function playRows(course) {
+  const s = summarize(course);
+  const final = pickFinal(course);
+  const weights = itemWeights(course);
+  const pace = (catId) => Math.round(categoryPace(course, catId) ?? s.current ?? 85);
+  const wi = whatIfOf(course);
+  const rows = [];
+  for (const cat of course.categories) {
+    const left = course.items.filter((i) => i.category === cat.id && !isGraded(i) && i.id !== final?.id && (weights.get(i.id)?.weight ?? 0) > 0);
+    if (!left.length) continue;
+    const share = Math.round(left.reduce((sum, i) => sum + weights.get(i.id).weight, 0) * 100);
+    rows.push({
+      key: cat.id,
+      name: cat.name,
+      note: `${left.length > 1 ? `${left.length} left · ` : left[0].name !== cat.name ? `${esc(left[0].name)} · ` : ''}${share}% of your grade`,
+      value: wi[cat.id] ?? pace(cat.id),
+    });
+  }
+  if (final && (weights.get(final.id)?.weight ?? 0) > 0) {
+    rows.push({
+      key: FINAL_KEY,
+      name: final.name,
+      note: `${Math.round(weights.get(final.id).weight * 100)}% of your grade`,
+      value: course.finalGuess ?? pace(final.category),
+    });
+  }
+  return rows;
+}
+
+function playPanel(course) {
+  const rows = playRows(course);
+  if (!rows.length) return '';
+  const touched = Object.keys(whatIfOf(course)).length || course.finalGuess !== undefined;
+  return `<section class="play">
+    <div class="play-head">
+      <div>
+        <h3>Drag to see where you land</h3>
+        <p class="tiny muted">What you average on what's left. They start at your pace so far.</p>
       </div>
-      <input id="wi-${course.id}" type="range" min="0" max="100" step="1" value="${value}" data-path="courses.${ci}.whatIf" data-type="number" data-course-id="${course.id}">
-      <p class="tiny muted">${on
-        ? `<button class="linkish" data-action="clear-whatif" data-course="${ci}">Back to your pace</button>`
-        : 'Your pace so far. Drag to try another.'}</p>
-    </div>`;
+      <div class="play-out" data-proj="${course.id}">${projection(course)}</div>
+    </div>
+    ${rows.map((r) => `<div class="play-row">
+      <div class="play-label">
+        <label for="pl-${course.id}-${r.key}">${esc(r.name)} <small class="muted">${r.note}</small></label>
+        <b data-v="${course.id}-${r.key}">${r.value}%</b>
+      </div>
+      <input id="pl-${course.id}-${r.key}" type="range" min="0" max="100" step="1" value="${r.value}" data-play-course="${course.id}" data-play-key="${r.key}">
+      ${r.key === FINAL_KEY ? `<p class="tiny need-line" data-need="${course.id}">${needLine(course)}</p>` : ''}
+    </div>`).join('')}
+    ${touched ? `<button class="linkish tiny" data-action="reset-play" data-course="${state.courses.indexOf(course)}">Back to your pace</button>` : ''}
+  </section>`;
+}
+
+/** Where the sliders say you finish. */
+function projection(course) {
+  const final = pickFinal(course);
+  const finalRow = playRows(course).find((r) => r.key === FINAL_KEY);
+  const p = projectGrade(course, whatIfOf(course), final?.id, finalRow ? finalRow.value : null);
+  const cutoff = (course.scale ?? DEFAULT_SCALE).find(([l]) => l === (course.target ?? 'A'))?.[1] ?? 0;
+  return `<span class="proj-kicker">You'd finish with</span>
+    <span class="proj-num ${p.grade >= cutoff - 1e-9 ? 'hit' : 'miss'}">${formatScore(p.grade)}</span>
+    <span class="proj-letter">${p.letter}</span>`;
+}
+
+function needLine(course) {
+  const target = course.target ?? 'A';
+  const row = finalTable(course, whatIfOf(course)).find((r) => r.letter === target);
+  if (!row || row.needed === null) return '';
+  if (row.needed <= 0) return `${target} is locked in whatever you get.`;
+  if (row.needed > 100) return `${target} is out of reach even with a 100.`;
+  return `You need ${formatScore(Math.ceil(row.needed * 10) / 10)} here for ${/^[AEF]/.test(target) ? 'an' : 'a'} ${target}.`;
+}
+
+/** While a slider moves: update the numbers in place (a full re-render would drop the drag). */
+function playLive(course) {
+  const table = finalTable(course, whatIfOf(course));
+  const set = (sel, html) => { const el = app.querySelector(sel); if (el) el.innerHTML = html; };
+  set(`[data-result="${course.id}"]`, finalResult(course, table));
+  set(`[data-ladder="${course.id}"]`, ladder(course, table));
+  set(`[data-proj="${course.id}"]`, projection(course));
+  set(`[data-need="${course.id}"]`, needLine(course));
 }
 
 // ---------- Study plan ----------
@@ -435,6 +511,7 @@ function renderClasses() {
   const sem = state.semester ?? { name: '', start: '', end: '' };
   return `
   <div class="stack">
+    ${draft ? quickSetup() : ''}
     ${renderImporter()}
     ${imports.map(reviewCard).join('')}
     <section class="card">
@@ -531,6 +608,115 @@ function classCard(course, ci) {
     <div class="danger-row"><button class="ghost small bad" data-action="del-course" data-course="${ci}">Delete ${esc(course.code || 'this class')}</button></div>
   </details>`;
 }
+
+// ---------- quick setup: type the categories in ----------
+
+const PRESETS = [
+  ['Homework', 10], ['Quizzes', 8], ['Midterm', 2], ['Final exam', 1], ['Project', 1], ['Labs', 8], ['Participation', 1],
+];
+
+function newDraft() {
+  return {
+    code: '',
+    rows: [
+      { name: 'Homework', weight: 25, count: 10 },
+      { name: 'Midterms', weight: 40, count: 2 },
+      { name: 'Final exam', weight: 25, count: 1 },
+      { name: 'Participation', weight: 10, count: 1 },
+    ],
+  };
+}
+
+function draftTotal() {
+  return draft.rows.reduce((sum, r) => sum + (Number(r.weight) || 0), 0);
+}
+
+function totalNote() {
+  const t = Math.round(draftTotal() * 10) / 10;
+  return t === 100 ? '<span class="ok">100% ✓</span>' : `<span class="bad">${t}%</span> <small class="muted">should add to 100</small>`;
+}
+
+function quickSetup() {
+  return `
+  <section class="card quick" id="quick">
+    <h2>Type your class in</h2>
+    <p class="muted">Copy the grade breakdown from your syllabus: each category, what it's worth, and how many there are.</p>
+    <label class="quick-code">Class <input value="${esc(draft.code)}" placeholder="MIS 333K" data-draft="code"></label>
+    <div class="quick-rows">
+      <div class="quick-row quick-labels"><span>Category</span><span>Weight</span><span>How many</span><span></span></div>
+      ${draft.rows.map((r, i) => `<div class="quick-row">
+        <input value="${esc(r.name)}" placeholder="Homework" data-draft="${i}.name" aria-label="Category">
+        <span class="unit"><input type="number" inputmode="decimal" min="0" max="100" step="any" value="${r.weight}" data-draft="${i}.weight" aria-label="Weight">%</span>
+        <input type="number" inputmode="numeric" min="1" max="60" step="1" value="${r.count}" data-draft="${i}.count" aria-label="How many">
+        <button class="x" data-action="draft-del" data-index="${i}" aria-label="Remove">×</button>
+      </div>`).join('')}
+    </div>
+    <div class="quick-add">
+      <span class="tiny muted">Add</span>
+      ${PRESETS.map(([name]) => `<button class="chip" data-action="draft-add" data-name="${name}">+ ${name}</button>`).join('')}
+      <button class="chip" data-action="draft-add" data-name="">+ Other</button>
+    </div>
+    <p class="quick-total">Total <b data-draft-total>${totalNote()}</b></p>
+    <div class="row-actions">
+      <button class="primary" data-action="draft-create">Add this class ✦</button>
+      <button class="ghost" data-action="draft-cancel">Cancel</button>
+    </div>
+    <p class="tiny muted">Then type in your scores as they come back. You can add dates and the fine print later in My classes.</p>
+  </section>`;
+}
+
+function kindFor(name) {
+  if (/final/i.test(name)) return 'exam';
+  if (/exam|midterm|test/i.test(name)) return 'exam';
+  if (/quiz/i.test(name)) return 'quiz';
+  if (/project|presentation/i.test(name)) return 'project';
+  if (/paper|essay|report|writing/i.test(name)) return 'paper';
+  if (/particip|attendance|engagement/i.test(name)) return 'participation';
+  return 'homework';
+}
+
+function singular(name) {
+  return name.replace(/zzes$/i, 'z').replace(/ies$/i, 'y').replace(/([^s])s$/i, '$1');
+}
+
+function courseFromDraft() {
+  const rows = draft.rows.filter((r) => r.name.trim() && Number(r.weight) > 0);
+  if (!rows.length) return null;
+  const course = {
+    id: uid(), code: draft.code.trim() || 'My class', name: '', color: PALETTE[state.courses.length % PALETTE.length], target: 'A',
+    meetings: [], categories: [], items: [],
+  };
+  for (const r of rows) {
+    const cat = { id: uid(), name: r.name.trim(), weight: Number(r.weight), dropLowest: 0 };
+    const n = Math.max(1, Math.min(60, Math.round(Number(r.count) || 1)));
+    course.categories.push(cat);
+    for (let k = 1; k <= n; k++) {
+      course.items.push({
+        id: uid(), name: n === 1 ? cat.name : `${singular(cat.name)} ${k}`, category: cat.id,
+        kind: kindFor(cat.name), possible: 100, earned: null, ...(n === 1 && /final/i.test(cat.name) ? { final: true } : {}),
+      });
+    }
+  }
+  return course;
+}
+
+function showCard(id) {
+  tab = 'grades';
+  history.replaceState(null, '', '#grades');
+  requestAnimationFrame(() => document.querySelector(`[data-card="${id}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+}
+
+app.addEventListener('input', (e) => {
+  const key = e.target.dataset?.draft;
+  if (!key || !draft) return;
+  if (key === 'code') draft.code = e.target.value;
+  else {
+    const [i, field] = key.split('.');
+    draft.rows[i][field] = field === 'name' ? e.target.value : e.target.value === '' ? '' : Number(e.target.value);
+  }
+  const total = app.querySelector('[data-draft-total]');
+  if (total) total.innerHTML = totalNote();
+});
 
 // ---------- syllabus upload ----------
 
@@ -661,14 +847,19 @@ app.addEventListener('change', (e) => {
 
 app.addEventListener('input', (e) => {
   if (e.target.dataset?.role === 'paste') pasteText = e.target.value;
-  // What-if slider: update the number while dragging, save and re-render on release.
-  const id = e.target.dataset?.courseId;
-  if (e.target.type === 'range' && id) {
-    const course = courseById(id);
-    course.whatIf = Number(e.target.value);
-    app.querySelector(`[data-result="${id}"]`).innerHTML = finalResult(course);
-    app.querySelector(`[data-wi="${id}"]`).textContent = `${course.whatIf}%`;
+  const { playCourse, playKey } = e.target.dataset ?? {};
+  if (playCourse) {
+    const course = courseById(playCourse);
+    const value = Number(e.target.value);
+    if (playKey === FINAL_KEY) course.finalGuess = value;
+    else course.whatIf = { ...whatIfOf(course), [playKey]: value };
+    app.querySelector(`[data-v="${playCourse}-${playKey}"]`).textContent = `${value}%`;
+    playLive(course);
   }
+});
+// Save when a slider is let go. No re-render, so the slider keeps focus for arrow keys.
+app.addEventListener('change', (e) => {
+  if (e.target.dataset?.playCourse) persist();
 });
 
 app.addEventListener('dragover', (e) => {
@@ -765,10 +956,7 @@ document.addEventListener('click', (e) => {
       state = { courses: [], busy: [], prefs: {}, semester: null };
       clear();
     },
-    start() {
-      tab = 'classes';
-      actions['add-course']();
-    },
+    start() { actions['add-course'](); },
     'read-paste'() {
       if (!pasteText.trim()) return;
       const text = pasteText;
@@ -779,9 +967,13 @@ document.addEventListener('click', (e) => {
       if (!entry) return;
       state.courses.push(entry.course);
       imports = imports.filter((i) => i !== entry);
+      if (!imports.length) showCard(entry.course.id);
     },
     'reset-scale'() { delete course.scale; },
-    'clear-whatif'() { delete course.whatIf; },
+    'reset-play'() {
+      delete course.whatIf;
+      delete course.finalGuess;
+    },
     'discard-import'() { imports = imports.filter((i) => i.id !== btn.dataset.id); },
     'retry-import'() {
       const entry = imports.find((i) => i.id === btn.dataset.id);
@@ -795,16 +987,23 @@ document.addEventListener('click', (e) => {
       readSyllabus(entry.fileName, null, btn.dataset.via, entry);
     },
     'add-course'() {
-      state.courses.push({
-        id: uid(), code: '', name: '', color: PALETTE[state.courses.length % PALETTE.length], target: 'A',
-        meetings: [{ days: [1, 3], start: '10:00', end: '11:30' }],
-        categories: [
-          { id: uid(), name: 'Exams', weight: 50, dropLowest: 0 },
-          { id: uid(), name: 'Homework', weight: 30, dropLowest: 0 },
-          { id: uid(), name: 'Participation', weight: 20, dropLowest: 0 },
-        ],
-        items: [],
-      });
+      draft ??= newDraft();
+      tab = 'classes';
+      history.replaceState(null, '', '#classes');
+      requestAnimationFrame(() => document.getElementById('quick')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    },
+    'draft-add'() {
+      const preset = PRESETS.find(([name]) => name === btn.dataset.name);
+      draft.rows.push({ name: btn.dataset.name, weight: '', count: preset?.[1] ?? 1 });
+    },
+    'draft-del'() { draft.rows.splice(Number(btn.dataset.index), 1); },
+    'draft-cancel'() { draft = null; },
+    'draft-create'() {
+      const made = courseFromDraft();
+      if (!made) return;
+      state.courses.push(made);
+      draft = null;
+      showCard(made.id);
     },
     'add-meeting'() { course.meetings.push({ days: [2, 4], start: '12:30', end: '14:00' }); },
     'add-category'() { course.categories.push({ id: uid(), name: 'New category', weight: 0, dropLowest: 0 }); },
