@@ -13,10 +13,11 @@ import { parseSyllabus } from './parser.js';
 import { toCourse } from './importer.js';
 import { DEFAULT_MODEL, readWithGemini } from './ai.js';
 import { pdfText } from './pdf.js';
+import { POINTS, cumulativeGpa, formatGpa, pointsFor, semesterGpa } from './gpa.js';
 
 const PALETTE = ['#d6336c', '#7048e8', '#0c8599', '#e8590c', '#2f9e44', '#1971c2', '#ae3ec9', '#f08c00'];
 const KINDS = ['exam', 'quiz', 'homework', 'project', 'paper', 'participation'];
-const TABS = ['grades', 'plan', 'wrapped', 'classes'];
+const TABS = ['grades', 'gpa', 'plan', 'wrapped', 'classes'];
 
 const app = document.getElementById('app');
 const today = todayLocal();
@@ -52,7 +53,7 @@ function render() {
   if (!state.courses.length && tab !== 'classes') {
     app.innerHTML = emptyState();
   } else {
-    app.innerHTML = { grades: renderGrades, plan: renderPlan, wrapped: renderWrapped, classes: renderClasses }[tab]();
+    app.innerHTML = { grades: renderGrades, gpa: renderGpa, plan: renderPlan, wrapped: renderWrapped, classes: renderClasses }[tab]();
   }
   if (tab === 'wrapped' && state.courses.length) paintCard();
   app.querySelectorAll('details[data-key]').forEach((d) => {
@@ -337,11 +338,16 @@ function playPanel(course) {
   </section>`;
 }
 
-/** Where the sliders say you finish. */
-function projection(course) {
+/** Where the class ends up if the rest goes like the sliders say (untouched sliders are your pace). */
+function landing(course) {
   const final = pickFinal(course);
   const finalRow = playRows(course).find((r) => r.key === FINAL_KEY);
-  const p = projectGrade(course, whatIfOf(course), final?.id, finalRow ? finalRow.value : null);
+  return projectGrade(course, whatIfOf(course), final?.id, finalRow ? finalRow.value : null);
+}
+
+/** Where the sliders say you finish. */
+function projection(course) {
+  const p = landing(course);
   const cutoff = (course.scale ?? DEFAULT_SCALE).find(([l]) => l === (course.target ?? 'A'))?.[1] ?? 0;
   return `<span class="proj-kicker">You'd finish with</span>
     <span class="proj-num ${p.grade >= cutoff - 1e-9 ? 'hit' : 'miss'}">${formatScore(p.grade)}</span>
@@ -365,6 +371,91 @@ function playLive(course) {
   set(`[data-ladder="${course.id}"]`, ladder(course, table));
   set(`[data-proj="${course.id}"]`, projection(course));
   set(`[data-need="${course.id}"]`, needLine(course));
+}
+
+// ---------- GPA ----------
+//
+// Each class counts at the letter it's headed for (the same projection as the
+// sliders on The final), unless you pick a letter yourself. course.hours,
+// course.gpaLetter (your pick), course.whatIfDrop; state.gpa = { prior, priorHours, aPlus }.
+
+function gpaRow(course) {
+  const headed = summarize(course).current === null ? null : landing(course).letter;
+  return {
+    course,
+    headed,
+    letter: course.gpaLetter || headed,
+    hours: course.hours ?? 3,
+    dropped: !!course.whatIfDrop,
+  };
+}
+
+function renderGpa() {
+  const g = state.gpa ?? {};
+  const opts = { aPlus: g.aPlus ? 4.33 : 4 };
+  const rows = state.courses.map(gpaRow);
+  const sem = semesterGpa(rows, opts);
+  const prior = { gpa: g.prior, hours: g.priorHours };
+  const overall = cumulativeGpa(sem, prior);
+  const hasPrior = Number(g.priorHours) > 0 && g.prior !== undefined;
+  const without = (row) => semesterGpa(rows.map((r) => (r === row ? { ...r, dropped: true } : r)), opts);
+  const delta = (a, b) => {
+    if (a === null || b === null) return '';
+    const d = Math.round((a - b) * 100) / 100;
+    return d === 0 ? '<small class="muted">same</small>' : `<small class="${d > 0 ? 'ok' : 'bad'}">${d > 0 ? '+' : ''}${d.toFixed(2)}</small>`;
+  };
+  const anyMissing = rows.some((r) => !r.dropped && !r.letter);
+
+  return `
+  <div class="stack gpa">
+    <section class="card gpa-hero">
+      <div class="gpa-big">
+        <span>This semester</span>
+        <b>${formatGpa(sem.gpa)}</b>
+        <small class="muted">${sem.hours} hour${sem.hours === 1 ? '' : 's'}${rows.some((r) => r.dropped) ? ` · after dropping ${rows.filter((r) => r.dropped).map((r) => esc(r.course.code)).join(', ')}` : ''}</small>
+      </div>
+      <div class="gpa-big">
+        <span>Overall</span>
+        <b>${hasPrior ? formatGpa(overall) : '—'}</b>
+        <small class="muted">${hasPrior ? `${Number(g.priorHours) + sem.hours} hours with this semester` : 'Add your GPA so far below'}</small>
+      </div>
+      <div class="grid2 gpa-prior">
+        <label>GPA so far <input type="number" inputmode="decimal" min="0" max="4.33" step="0.01" value="${g.prior ?? ''}" placeholder="3.50" data-path="gpa.prior" data-type="optnumber"></label>
+        <label>Hours so far <input type="number" inputmode="numeric" min="0" step="1" value="${g.priorHours ?? ''}" placeholder="45" data-path="gpa.priorHours" data-type="optnumber"></label>
+      </div>
+      <p class="tiny muted">From your transcript, before this semester. Leave it empty for a semester GPA only.</p>
+    </section>
+
+    <section class="card">
+      <h2>Your classes</h2>
+      <p class="muted">Each class counts at the grade it's headed for (your sliders on The final). Pick a letter to try another, or drop a class to see what it does.</p>
+      <div class="gpa-table">
+        <div class="gpa-tr gpa-th"><span>Class</span><span>Hours</span><span>Grade</span><span>Without it</span><span>Drop</span></div>
+        ${rows.map((r) => {
+          const ci = state.courses.indexOf(r.course);
+          const scale = (r.course.scale ?? DEFAULT_SCALE).map(([l]) => l).filter((l) => l in POINTS);
+          const w = without(r);
+          const p = pointsFor(r.letter, opts);
+          return `<div class="gpa-tr ${r.dropped ? 'is-dropped' : ''}" style="--c:${r.course.color}">
+            <span class="gpa-class"><span class="dot"></span><b>${esc(r.course.code)}</b>${r.dropped ? ' <small class="muted">dropped</small>' : ''}</span>
+            <span class="unit"><input type="number" inputmode="numeric" min="0" max="6" step="1" value="${r.hours}" data-path="courses.${ci}.hours" data-type="number" aria-label="${esc(r.course.code)} credit hours"><small>hrs</small></span>
+            <span class="gpa-grade">
+              <select data-path="courses.${ci}.gpaLetter" aria-label="${esc(r.course.code)} grade">
+                <option value="">${r.headed ? `Headed for ${r.headed}` : 'No grades yet'}</option>
+                ${scale.map((l) => `<option value="${l}" ${r.course.gpaLetter === l ? 'selected' : ''}>${l}</option>`).join('')}
+              </select>
+              <small class="muted">${p === null ? 'pick a letter' : `${p.toFixed(2)} points`}</small>
+            </span>
+            <span class="gpa-without">${r.dropped ? '—' : `${formatGpa(w.gpa)} ${delta(w.gpa, sem.gpa)}`}</span>
+            <span><label class="drop-toggle"><input type="checkbox" ${r.dropped ? 'checked' : ''} data-path="courses.${ci}.whatIfDrop" data-type="bool" aria-label="Drop ${esc(r.course.code)}"><span>Drop</span></label></span>
+          </div>`;
+        }).join('')}
+      </div>
+      ${anyMissing ? '<p class="tiny muted">Classes with no grades yet don\'t count until you pick a letter.</p>' : ''}
+      ${sem.hours > 0 && sem.hours < 12 ? `<p class="warn">That's ${sem.hours} hours. At a lot of schools under 12 is part-time, which can affect financial aid, scholarships and visas. Check with your advisor before you drop.</p>` : ''}
+      <label class="radio gpa-aplus"><input type="checkbox" ${g.aPlus ? 'checked' : ''} data-path="gpa.aPlus" data-type="bool"><span>My school counts an A+ as 4.33 <small class="muted">(most count it as 4.0)</small></span></label>
+    </section>
+  </div>`;
 }
 
 // ---------- Study plan ----------

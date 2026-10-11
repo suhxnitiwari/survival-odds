@@ -366,3 +366,36 @@ label.inline input { width: 5rem; }
 .scale-grid label b { width: 1.6rem; font-family: var(--display); }
 .scale-grid input { padding: 0.3rem 0.4rem; }
 .scale-card .scale-edit { text-align: left; }
+
+/* ---------- GPA ---------- */
+.gpa { max-width: 860px; margin: 0 auto; }
+.gpa-hero { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; }
+.gpa-big { display: grid; justify-items: start; }
+.gpa-big span { font-weight: 600; color: var(--muted); font-size: 0.85rem; }
+.gpa-big b { font: 900 3.4rem/1.05 var(--display); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+.gpa-prior, .gpa-hero > .tiny { grid-column: 1 / -1; }
+.gpa-prior { max-width: 420px; }
+.gpa-table { margin-top: 0.75rem; }
+.gpa-tr { display: grid; grid-template-columns: minmax(0, 1.3fr) 5.5rem minmax(0, 1.4fr) minmax(0, 1fr) 4.5rem; gap: 0.6rem; align-items: center; padding: 0.55rem 0; border-top: 1px solid var(--line); }
+.gpa-th { border-top: 0; font-size: 0.75rem; color: var(--muted); font-weight: 600; padding-bottom: 0.2rem; }
+.gpa-class { display: flex; align-items: center; gap: 0.1rem; flex-wrap: wrap; }
+.gpa-grade { display: grid; gap: 0.15rem; }
+.gpa-without { font-variant-numeric: tabular-nums; font-weight: 600; }
+.gpa-without small { font-weight: 700; margin-left: 0.2rem; }
+.is-dropped .gpa-class b, .is-dropped .gpa-grade { opacity: 0.45; }
+.is-dropped .gpa-class b { text-decoration: line-through; }
+.drop-toggle { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--ink); font-size: 0.85rem; cursor: pointer; }
+.drop-toggle input { accent-color: var(--nope); }
+.gpa-aplus { margin-top: 1rem; }
+@media (max-width: 600px) {
+  .gpa-hero { grid-template-columns: 1fr 1fr; }
+  .gpa-big b { font-size: 2.6rem; }
+  .gpa-th { display: none; }
+  .gpa-tr { grid-template-columns: minmax(0, 1fr) 5.2rem; grid-template-areas: 'class drop' 'grade hours' 'without without'; row-gap: 0.4rem; }
+  .gpa-tr > :nth-child(1) { grid-area: class; }
+  .gpa-tr > :nth-child(2) { grid-area: hours; }
+  .gpa-tr > :nth-child(3) { grid-area: grade; }
+  .gpa-tr > :nth-child(4) { grid-area: without; }
+  .gpa-tr > :nth-child(5) { grid-area: drop; justify-self: end; }
+  .gpa-without::before { content: 'Without it: '; font-weight: 400; color: var(--muted); font-size: 0.85rem; }
+}

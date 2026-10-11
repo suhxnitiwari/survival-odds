@@ -8,11 +8,12 @@
 
 ## What it is
 
-Survival Odds reads your syllabi, pulls out the grade weights, class times and exam dates, and then does the three things I actually want during a semester:
+Survival Odds reads your syllabi, pulls out the grade weights, class times and exam dates, and then does the four things I actually want during a semester:
 
 1. **"What do I need on the final?"** Enter grades as they come back and get the exact score you need for the grade you want. *"You need a 71 for an A. You're fine. Go to Cosmic."* Then drag a slider for each category still ahead (and one for the final) to see where you land. No syllabus handy? Type the categories and weights in yourself. Just took a midterm and don't feel great? Pick it, and it shows what you need on it for an A, a B, a C and a D side by side. Every class can set its own scale: plus/minus, with an A+, plain 90/80/70/60, or any cutoff (an A at 96).
 2. **Study blocks that plan themselves.** It works backward from every exam and fits study sessions around your classes, your work shifts, and Saturday brunch.
-3. **Semester Wrapped.** A story-sized card of your semester (deadlines, exams, hardest class, worst week, survival odds) to post or send to the group chat.
+3. **GPA, with what-ifs.** Your semester GPA from the grade each class is headed for, your overall GPA once you add what you had before, and what dropping any one class would do to it.
+4. **Semester Wrapped.** A story-sized card of your semester (deadlines, exams, hardest class, worst week, survival odds) to post or send to the group chat.
 
 It runs entirely in your browser. No accounts, no server, and nobody else sees your grades.
 
@@ -44,7 +45,7 @@ Rules like rounding make the math non-linear, so "what you need" isn't one formu
 
 ## How it's built
 
-The interesting parts are a rule-based syllabus parser, weighted grade math that stays honest about what it doesn't know yet, a cost-based study scheduler, and standards-correct calendar export. All of it is plain JavaScript modules with 54 `node:test` tests, and CI runs them before every GitHub Pages deploy, so a failing test blocks the release.
+The interesting parts are a rule-based syllabus parser, weighted grade math that stays honest about what it doesn't know yet, a cost-based study scheduler, and standards-correct calendar export. All of it is plain JavaScript modules with 57 `node:test` tests, and CI runs them before every GitHub Pages deploy, so a failing test blocks the release.
 
 ### Reading a syllabus
 
@@ -114,7 +115,7 @@ It's plain HTML, CSS and JavaScript modules. There's no build step.
 
 ```bash
 python3 -m http.server 8000     # then open http://localhost:8000
-npm test                        # 54 tests, Node 22+
+npm test                        # 57 tests, Node 22+
 ```
 
 Open `?example` to see a made-up semester without touching your saved data.
@@ -127,6 +128,7 @@ css/style.css
 js/
   app.js        UI: tabs, forms, review cards, downloads
   grades.js     weights, syllabus rules, current grade, what you need on the final
+  gpa.js        grade points, semester and overall GPA
   planner.js    study blocks, the rules as data
   parser.js     the built-in syllabus reader
   importer.js   turns a reader's result into a class, with checks and warnings
